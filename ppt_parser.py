@@ -1,6 +1,39 @@
 import io
+import zipfile
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+
+def validate_pptx_file(file_bytes: bytes, filename: str = "", max_size_mb: int = 50):
+    """
+    Validates uploaded file size and inspects ZIP structure for valid PowerPoint presentation data.
+    Raises ValueError with user-friendly error message if validation fails.
+    """
+    # 1. Size Validation
+    max_bytes = max_size_mb * 1024 * 1024
+    if len(file_bytes) > max_bytes:
+        raise ValueError(f"File size exceeds the maximum limit of {max_size_mb} MB.")
+
+    if len(file_bytes) < 100:
+        raise ValueError("File is too small to be a valid PowerPoint presentation.")
+
+    # 2. Magic Header check for ZIP format
+    if not file_bytes.startswith(b"PK\x03\x04"):
+        raise ValueError("Invalid file format. The file is not a valid PowerPoint (.pptx) archive.")
+
+    # 3. Structure check inside ZIP archive
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            namelist = zf.namelist()
+            # PowerPoint files MUST contain [Content_Types].xml and ppt/presentation.xml
+            if "[Content_Types].xml" not in namelist or not any(name.startswith("ppt/") for name in namelist):
+                raise ValueError("Corrupt or unsupported presentation format. Missing PowerPoint XML structures.")
+    except zipfile.BadZipFile:
+        raise ValueError("Corrupt file. Unable to read PowerPoint ZIP structure.")
+    except Exception as e:
+        if isinstance(e, ValueError):
+            raise e
+        raise ValueError(f"Failed to validate PowerPoint archive: {str(e)}")
 
 
 def extract_ppt_content(file_bytes: bytes) -> dict:
@@ -31,17 +64,14 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
         # Extract shape text and tables
         shape_texts = []
         for shape in slide.shapes:
-            # Avoid duplicating title in main text body if already captured
             if shape == slide.shapes.title:
                 continue
 
-            # Process text frames
             if shape.has_text_frame:
                 txt = shape.text.strip()
                 if txt:
                     shape_texts.append(txt)
 
-            # Process tables
             if shape.has_table:
                 table_data = []
                 for row in shape.table.rows:
@@ -50,11 +80,9 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
                         table_data.append(row_data)
                 if table_data:
                     slide_info["tables"].append(table_data)
-                    # Convert table to string format for text representation
                     table_str = "\n".join([" | ".join(r) for r in table_data])
                     shape_texts.append(f"[Table Content]\n{table_str}")
 
-            # Process group shapes recursively
             if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
                 group_texts = _extract_group_shape_text(shape)
                 shape_texts.extend(group_texts)
@@ -68,9 +96,8 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
                 notes_slide = slide.notes_slide
                 if notes_slide and notes_slide.notes_text_frame:
                     raw_notes = notes_slide.notes_text_frame.text.strip()
-                    # Filter out standard template default filler if necessary
                     speaker_notes = raw_notes
-        except Exception as e:
+        except Exception:
             speaker_notes = ""
 
         slide_info["speaker_notes"] = speaker_notes
@@ -85,7 +112,6 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
         slide_info["raw_text"] = "\n\n".join(combined_text_parts)
         slides_data.append(slide_info)
 
-        # For full text digest
         full_text_blocks.append(slide_info["raw_text"])
 
     full_digest = "\n\n" + ("=" * 40) + "\n\n".join(full_text_blocks)

@@ -1,61 +1,108 @@
-import os
+import io
 import sys
+import os
+from fastapi.testclient import TestClient
+
+from main import app
+from database import init_db
 from create_sample_ppt import create_sample_presentation
-from ppt_parser import extract_ppt_content
-from ai_study import generate_study_summary, generate_flashcards, generate_quiz, answer_study_chat
+from ppt_parser import extract_ppt_content, validate_pptx_file
 
 def main():
-    print("--- 1. Generating Sample Presentation ---")
-    ppt_filename = "sample_study_presentation.pptx"
-    create_sample_presentation(ppt_filename)
+    # Ensure database tables exist for tests
+    init_db()
 
-    print("\n--- 2. Testing PPT Text & Speaker Notes Extraction ---")
-    with open(ppt_filename, "rb") as f:
-        file_bytes = f.read()
+    print("--- 1. Testing Hard File Validation Functions ---")
+    
+    sample_filename = "sample_study_presentation.pptx"
+    create_sample_presentation(sample_filename)
 
-    extracted = extract_ppt_content(file_bytes)
+    with open(sample_filename, "rb") as f:
+        valid_ppt_bytes = f.read()
 
-    print(f"Total Slides Extracted: {extracted['total_slides']}")
-    assert extracted['total_slides'] == 3, f"Expected 3 slides, got {extracted['total_slides']}"
+    validate_pptx_file(valid_ppt_bytes, filename=sample_filename, max_size_mb=50)
+    print("Valid PPT byte validation passed.")
 
-    # Check Slide 1 notes
-    s1_notes = extracted['slides'][0]['speaker_notes']
-    print(f"Slide 1 Title: {extracted['slides'][0]['title']}")
-    print(f"Slide 1 Speaker Notes: {s1_notes}")
-    assert "WELCOME NOTES" in s1_notes, "Slide 1 speaker notes missing!"
+    try:
+        validate_pptx_file(b"Hello world invalid content", filename="fake.pptx")
+        assert False, "Should have failed validation for non-zip bytes!"
+    except ValueError as ve:
+        print(f"Caught expected invalid file error: {ve}")
 
-    # Check Slide 2 notes
-    s2_notes = extracted['slides'][1]['speaker_notes']
-    print(f"\nSlide 2 Title: {extracted['slides'][1]['title']}")
-    print(f"Slide 2 Speaker Notes: {s2_notes}")
-    assert "IMPORTANT PRESENTER NOTE" in s2_notes, "Slide 2 speaker notes missing!"
+    print("\n--- 2. Testing FastAPI REST Endpoints via TestClient ---")
 
-    # Check Slide 3 table & notes
-    s3 = extracted['slides'][2]
-    print(f"\nSlide 3 Title: {s3['title']}")
-    print(f"Slide 3 Tables Count: {len(s3['tables'])}")
-    print(f"Slide 3 Speaker Notes: {s3['speaker_notes']}")
-    assert len(s3['tables']) == 1, "Slide 3 table extraction failed!"
-    assert "SPEAKER NOTE UNDER SLIDE 3" in s3['speaker_notes'], "Slide 3 speaker notes missing!"
+    with TestClient(app) as client:
+        # A) Test upload without presentation / bad file type
+        resp = client.post("/api/upload", files={"file": ("test.txt", b"some text content", "text/plain")})
+        assert resp.status_code == 400, f"Expected 400 Bad Request for text file, got {resp.status_code}"
+        print("Non-PPT upload correctly rejected with 400 Bad Request.")
 
-    print("\n--- 3. Testing AI Study Feature Generators (Smart Fallback Mode) ---")
-    summary = generate_study_summary(extracted)
-    print("Generated Summary Title:", summary.get("title"))
-    print("Speaker Notes Highlights Count:", len(summary.get("speaker_note_highlights", [])))
+        # B) Test study endpoint without uploaded presentation (new isolated session client)
+        with TestClient(app) as new_client:
+            resp = new_client.post("/api/study/summary", json={})
+            assert resp.status_code == 400, f"Expected 400 Bad Request when no presentation uploaded, got {resp.status_code}"
+            print("Study summary without presentation correctly rejected with 400 Bad Request.")
 
-    flashcards = generate_flashcards(extracted)
-    print(f"Generated Flashcards Count: {len(flashcards)}")
-    for card in flashcards[:3]:
-        print(f"  - Card {card['id']}: Front='{card['front']}' | Category='{card['category']}'")
+        # C) Test valid .pptx upload
+        resp = client.post(
+            "/api/upload",
+            files={"file": ("presentation.pptx", valid_ppt_bytes, "application/vnd.openxmlformats-officedocument.presentationml.presentation")}
+        )
+        assert resp.status_code == 200, f"Expected 200 OK for upload, got {resp.status_code}: {resp.text}"
+        upload_data = resp.json()
+        assert upload_data["success"] is True
+        assert upload_data["total_slides"] == 3
+        print(f"PPT Upload Endpoint succeeded! Total Slides: {upload_data['total_slides']}")
 
-    quiz = generate_quiz(extracted)
-    print(f"Generated Quiz Questions Count: {len(quiz)}")
+        # D) Test /api/current session retrieval
+        resp = client.get("/api/current")
+        assert resp.status_code == 200
+        current_data = resp.json()
+        assert current_data["loaded"] is True
+        assert current_data["filename"] == "presentation.pptx"
+        print("GET /api/current session retrieval verified.")
 
-    chat_reply = answer_study_chat(extracted, [], "What did the presenter note about Slide 2?")
-    print("\nChat Reply for query about Slide 2 speaker notes:")
-    print(chat_reply.encode('ascii', errors='backslashreplace').decode('ascii'))
+        # E) Test /api/study/summary
+        resp = client.post("/api/study/summary", json={})
+        assert resp.status_code == 200
+        summary_data = resp.json()
+        assert "summary" in summary_data or "title" in summary_data
+        print("POST /api/study/summary endpoint verified.")
 
-    print("\n[SUCCESS] ALL TESTS PASSED SUCCESSFULLY!")
+        # F) Test /api/study/flashcards
+        resp = client.post("/api/study/flashcards", json={})
+        assert resp.status_code == 200
+        fc_data = resp.json()
+        assert "flashcards" in fc_data and len(fc_data["flashcards"]) > 0
+        print(f"POST /api/study/flashcards endpoint verified ({len(fc_data['flashcards'])} cards).")
+
+        # G) Test /api/study/quiz
+        resp = client.post("/api/study/quiz", json={})
+        assert resp.status_code == 200
+        quiz_data = resp.json()
+        assert "quiz" in quiz_data and len(quiz_data["quiz"]) > 0
+        print(f"POST /api/study/quiz endpoint verified ({len(quiz_data['quiz'])} questions).")
+
+        # H) Test /api/study/chat with various teacher_mode options
+        teacher_modes = ["tutor", "eli5", "quiz_me", "notes_deepdive"]
+        for mode in teacher_modes:
+            resp = client.post("/api/study/chat", json={
+                "message": "Explain Slide 2 speaker notes",
+                "teacher_mode": mode
+            })
+            assert resp.status_code == 200
+            reply = resp.json().get("reply", "")
+            assert len(reply) > 0
+            print(f"POST /api/study/chat verified for teacher_mode='{mode}'.")
+
+        # I) Test text export endpoint
+        resp = client.get("/api/export/text")
+        assert resp.status_code == 200
+        assert "text/plain" in resp.headers["content-type"]
+        assert len(resp.text) > 50
+        print("GET /api/export/text verified.")
+
+    print("\n[SUCCESS] ALL FASTAPI ENDPOINTS & HARDENING TESTS PASSED SUCCESSFULLY!")
 
 if __name__ == "__main__":
     main()

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PPT Extractor & AI Study Assistant</title>
+    <title>PPT Extractor & ChatGPT AI Teacher Assistant</title>
     <link rel="stylesheet" href="/static/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -11,56 +11,63 @@
 <body>
     <div class="app-container">
         <!-- Top Navbar -->
-        <header class="navbar">
+        <header class="navbar" role="banner">
             <div class="logo">
-                <i class="fa-solid fa-file-powerpoint logo-icon"></i>
+                <i class="fa-solid fa-graduation-cap logo-icon" aria-hidden="true"></i>
                 <div class="logo-text">
-                    <h1>PPT StudyAI Website</h1>
-                    <span class="tagline">Text & Speaker Notes Study Assistant</span>
+                    <h1>PPT StudyAI Teacher</h1>
+                    <span class="tagline">Text & Speaker Notes ChatGPT Assistant</span>
                 </div>
             </div>
 
             <div class="navbar-actions">
-                <button id="sampleDemoBtn" class="btn btn-secondary" style="font-size: 13px;">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i> Try Sample Demo
+                <button id="sampleDemoBtn" class="btn btn-secondary" style="font-size: 13px;" aria-label="Try Sample Demo Presentation">
+                    <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Try Sample Demo
                 </button>
                 <div class="api-key-container">
-                    <i class="fa-solid fa-key key-icon"></i>
-                    <input type="password" id="apiKeyInput" placeholder="Gemini API Key (Optional)" />
-                    <button id="saveKeyBtn" title="Save API Key"><i class="fa-solid fa-check"></i></button>
+                    <i class="fa-solid fa-key key-icon" aria-hidden="true"></i>
+                    <input type="password" id="apiKeyInput" placeholder="Gemini API Key (Optional)" aria-label="Gemini API Key" />
+                    <button id="saveKeyBtn" title="Save API Key" aria-label="Save API Key"><i class="fa-solid fa-check" aria-hidden="true"></i></button>
                 </div>
                 <div id="aiStatusBadge" class="badge badge-fallback" title="Using Smart Fallback Mode. Enter API Key for full AI generation.">
-                    <span class="dot"></span> <span id="aiStatusText">Smart Local Mode</span>
+                    <span class="dot" aria-hidden="true"></span> <span id="aiStatusText">Smart Local Mode</span>
                 </div>
             </div>
         </header>
 
         <!-- Main Content Area -->
-        <main class="main-content">
+        <main class="main-content" role="main">
+
+            <!-- Global Error Banner -->
+            <div id="errorBanner" class="error-banner hidden" role="alert" aria-live="assertive">
+                <i class="fa-solid fa-circle-exclamation error-banner-icon" aria-hidden="true"></i>
+                <span id="errorMessage">An error occurred.</span>
+                <button class="error-close-btn" onclick="hideError()" aria-label="Dismiss error">&times;</button>
+            </div>
 
             <!-- File Upload Section -->
             <section id="uploadSection" class="upload-section">
                 <div class="upload-card" id="dropZone">
                     <div class="upload-icon-wrapper">
-                        <i class="fa-solid fa-cloud-arrow-up upload-icon"></i>
+                        <i class="fa-solid fa-cloud-arrow-up upload-icon" aria-hidden="true"></i>
                     </div>
                     <h2>Upload your PowerPoint Presentation</h2>
                     <p class="upload-desc">Extract slide content, text, tables, and **hidden speaker notes** automatically</p>
-                    <input type="file" id="fileInput" accept=".pptx" hidden />
+                    <input type="file" id="fileInput" accept=".pptx" hidden aria-label="Upload PowerPoint presentation file" />
                     <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
                         <button class="btn btn-primary btn-large" onclick="document.getElementById('fileInput').click()">
-                            <i class="fa-solid fa-folder-open"></i> Choose .pptx File
+                            <i class="fa-solid fa-folder-open" aria-hidden="true"></i> Choose .pptx File
                         </button>
                         <button class="btn btn-secondary btn-large" id="heroSampleBtn">
-                            <i class="fa-solid fa-bolt"></i> Try Sample Demo
+                            <i class="fa-solid fa-bolt" aria-hidden="true"></i> Try Sample Demo
                         </button>
                     </div>
-                    <span class="file-hint">Supports .pptx files with full speaker notes parsing</span>
+                    <span class="file-hint">Supports .pptx files up to 50 MB with full speaker notes parsing</span>
                 </div>
             </section>
 
             <!-- Loading Spinner -->
-            <div id="loadingOverlay" class="loading-overlay hidden">
+            <div id="loadingOverlay" class="loading-overlay hidden" aria-live="polite">
                 <div class="spinner"></div>
                 <p id="loadingText">Extracting slide text and speaker notes...</p>
             </div>
@@ -71,38 +78,38 @@
                 <!-- File Summary Bar -->
                 <div class="file-bar">
                     <div class="file-info">
-                        <i class="fa-solid fa-file-powerpoint file-bar-icon"></i>
+                        <i class="fa-solid fa-file-powerpoint file-bar-icon" aria-hidden="true"></i>
                         <div>
                             <h3 id="loadedFileName">presentation.pptx</h3>
                             <span id="slideCountBadge" class="slide-count">0 Slides Extracted</span>
                         </div>
                     </div>
                     <div class="file-bar-actions" style="display: flex; gap: 10px;">
-                        <button class="btn btn-outline" id="exportTextBtn" title="Export all text & speaker notes">
-                            <i class="fa-solid fa-download"></i> Export Notes (.txt)
+                        <button class="btn btn-outline" id="exportTextBtn" title="Export all text & speaker notes" aria-label="Export notes to text file">
+                            <i class="fa-solid fa-download" aria-hidden="true"></i> Export Notes (.txt)
                         </button>
-                        <button class="btn btn-outline" id="reuploadBtn">
-                            <i class="fa-solid fa-rotate-left"></i> Change Presentation
+                        <button class="btn btn-outline" id="reuploadBtn" aria-label="Change presentation">
+                            <i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Change Presentation
                         </button>
                     </div>
                 </div>
 
                 <!-- Navigation Tabs -->
-                <nav class="tabs-nav">
-                    <button class="tab-btn active" data-tab="slidesTab">
-                        <i class="fa-solid fa-layer-group"></i> Slides & Notes (<span id="tabSlideCount">0</span>)
+                <nav class="tabs-nav" role="tablist" aria-label="Study Hub Navigation">
+                    <button class="tab-btn active" data-tab="slidesTab" role="tab" aria-selected="true" id="tab-slides">
+                        <i class="fa-solid fa-layer-group" aria-hidden="true"></i> Slides & Notes (<span id="tabSlideCount">0</span>)
                     </button>
-                    <button class="tab-btn" data-tab="summaryTab">
-                        <i class="fa-solid fa-book-open"></i> Study Guide
+                    <button class="tab-btn" data-tab="summaryTab" role="tab" aria-selected="false" id="tab-summary">
+                        <i class="fa-solid fa-book-open" aria-hidden="true"></i> Study Guide
                     </button>
-                    <button class="tab-btn" data-tab="flashcardsTab">
-                        <i class="fa-solid fa-clone"></i> Flashcards
+                    <button class="tab-btn" data-tab="flashcardsTab" role="tab" aria-selected="false" id="tab-flashcards">
+                        <i class="fa-solid fa-clone" aria-hidden="true"></i> Flashcards
                     </button>
-                    <button class="tab-btn" data-tab="quizTab">
-                        <i class="fa-solid fa-list-check"></i> Practice Quiz
+                    <button class="tab-btn" data-tab="quizTab" role="tab" aria-selected="false" id="tab-quiz">
+                        <i class="fa-solid fa-list-check" aria-hidden="true"></i> Practice Quiz
                     </button>
-                    <button class="tab-btn" data-tab="chatTab">
-                        <i class="fa-solid fa-robot"></i> AI Tutor Chat
+                    <button class="tab-btn" data-tab="chatTab" role="tab" aria-selected="false" id="tab-chat">
+                        <i class="fa-solid fa-robot" aria-hidden="true"></i> ChatGPT AI Teacher
                     </button>
                 </nav>
 
@@ -110,14 +117,14 @@
                 <div class="tab-content">
 
                     <!-- 1. SLIDES & SPEAKER NOTES TAB -->
-                    <div id="slidesTab" class="tab-panel active">
+                    <div id="slidesTab" class="tab-panel active" role="tabpanel" aria-labelledby="tab-slides">
                         <div class="panel-header flex-between">
                             <div>
-                                <h2><i class="fa-solid fa-align-left"></i> Extracted Slide Content & Speaker Notes</h2>
+                                <h2><i class="fa-solid fa-align-left" aria-hidden="true"></i> Extracted Slide Content & Speaker Notes</h2>
                                 <p class="panel-subtitle">All text, lists, tables, and notes from under each slide are listed below.</p>
                             </div>
                             <div class="search-box">
-                                <input type="text" id="slideSearchInput" placeholder="Search slides or notes..." style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px;" />
+                                <input type="text" id="slideSearchInput" placeholder="Search slides or notes..." aria-label="Search slides or speaker notes" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px;" />
                             </div>
                         </div>
                         <div id="slidesContainer" class="slides-container">
@@ -126,19 +133,19 @@
                     </div>
 
                     <!-- 2. STUDY GUIDE SUMMARY TAB -->
-                    <div id="summaryTab" class="tab-panel">
+                    <div id="summaryTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-summary">
                         <div class="panel-header flex-between">
                             <div>
-                                <h2><i class="fa-solid fa-graduation-cap"></i> AI Study Guide & Breakdown</h2>
+                                <h2><i class="fa-solid fa-graduation-cap" aria-hidden="true"></i> AI Study Guide & Breakdown</h2>
                                 <p class="panel-subtitle">Overview, key concepts, speaker note highlights, and tips.</p>
                             </div>
-                            <button id="generateSummaryBtn" class="btn btn-secondary">
-                                <i class="fa-solid fa-arrows-rotate"></i> Regenerate Guide
+                            <button id="generateSummaryBtn" class="btn btn-secondary" aria-label="Regenerate Study Guide">
+                                <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Regenerate Guide
                             </button>
                         </div>
                         <div id="summaryContainer" class="summary-container">
                             <div class="placeholder-state">
-                                <i class="fa-solid fa-book-open placeholder-icon"></i>
+                                <i class="fa-solid fa-book-open placeholder-icon" aria-hidden="true"></i>
                                 <p>Click below to generate a full study guide from your slides & presenter notes.</p>
                                 <button class="btn btn-primary" onclick="loadStudySummary()">Generate Study Guide</button>
                             </div>
@@ -146,20 +153,20 @@
                     </div>
 
                     <!-- 3. FLASHCARDS TAB -->
-                    <div id="flashcardsTab" class="tab-panel">
+                    <div id="flashcardsTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-flashcards">
                         <div class="panel-header flex-between">
                             <div>
-                                <h2><i class="fa-solid fa-clone"></i> Active Recall Flashcards</h2>
+                                <h2><i class="fa-solid fa-clone" aria-hidden="true"></i> Active Recall Flashcards</h2>
                                 <p class="panel-subtitle">Click the card to flip and reveal the answer!</p>
                             </div>
-                            <button id="generateFlashcardsBtn" class="btn btn-secondary">
-                                <i class="fa-solid fa-arrows-rotate"></i> Generate New Cards
+                            <button id="generateFlashcardsBtn" class="btn btn-secondary" aria-label="Generate new flashcards">
+                                <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Generate New Cards
                             </button>
                         </div>
                         
                         <div id="flashcardsContainer" class="flashcard-deck-container">
                             <div class="placeholder-state">
-                                <i class="fa-solid fa-clone placeholder-icon"></i>
+                                <i class="fa-solid fa-clone placeholder-icon" aria-hidden="true"></i>
                                 <p>Ready to practice active recall? Generate flashcards from slides and speaker notes.</p>
                                 <button class="btn btn-primary" onclick="loadFlashcards()">Generate Flashcards</button>
                             </div>
@@ -167,19 +174,19 @@
                     </div>
 
                     <!-- 4. PRACTICE QUIZ TAB -->
-                    <div id="quizTab" class="tab-panel">
+                    <div id="quizTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-quiz">
                         <div class="panel-header flex-between">
                             <div>
-                                <h2><i class="fa-solid fa-list-check"></i> Practice Quiz</h2>
-                                <p class="panel-subtitle">Test your knowledge with instant scoring and explanations.</p>
+                                <h2><i class="fa-solid fa-list-check" aria-hidden="true"></i> Practice Quiz</h2>
+                                <p class="panel-subtitle">Test your knowledge with instant scoring and teacher explanations.</p>
                             </div>
-                            <button id="generateQuizBtn" class="btn btn-secondary">
-                                <i class="fa-solid fa-arrows-rotate"></i> New Quiz
+                            <button id="generateQuizBtn" class="btn btn-secondary" aria-label="Generate new quiz">
+                                <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> New Quiz
                             </button>
                         </div>
                         <div id="quizContainer" class="quiz-container">
                             <div class="placeholder-state">
-                                <i class="fa-solid fa-list-check placeholder-icon"></i>
+                                <i class="fa-solid fa-list-check placeholder-icon" aria-hidden="true"></i>
                                 <p>Generate a quiz based on your presentation slides and presenter notes.</p>
                                 <button class="btn btn-primary" onclick="loadQuiz()">Generate Quiz</button>
                             </div>
@@ -187,15 +194,24 @@
                     </div>
 
                     <!-- 5. AI TUTOR CHAT TAB -->
-                    <div id="chatTab" class="tab-panel">
+                    <div id="chatTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-chat">
                         <div class="chat-container">
-                            <div class="chat-header">
+                            <div class="chat-header flex-between">
                                 <div class="tutor-profile">
-                                    <div class="tutor-avatar"><i class="fa-solid fa-robot"></i></div>
+                                    <div class="tutor-avatar"><i class="fa-solid fa-robot" aria-hidden="true"></i></div>
                                     <div>
-                                        <h3>AI Study Tutor</h3>
+                                        <h3>ChatGPT AI Teacher</h3>
                                         <span class="status-online">● Ready to answer questions on slides & notes</span>
                                     </div>
+                                </div>
+                                <div class="teacher-mode-selector">
+                                    <label for="teacherModeSelect" style="font-size: 12px; font-weight: 700; margin-right: 6px;">Teacher Mode:</label>
+                                    <select id="teacherModeSelect" aria-label="Select AI Teacher Mode" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-color); font-size: 13px; background: white;">
+                                        <option value="tutor">👨‍🏫 ChatGPT Tutor (Interactive)</option>
+                                        <option value="eli5">👶 Explain Like I'm 5 (Simple)</option>
+                                        <option value="quiz_me">🎯 Socratic Examiner (Quiz Me)</option>
+                                        <option value="notes_deepdive">📌 Speaker Notes Deep-Dive</option>
+                                    </select>
                                 </div>
                             </div>
 
@@ -206,17 +222,17 @@
                                 <button class="chip-btn" onclick="sendSuggestedQuestion('Explain the most difficult concept in simple terms.')">Explain difficult concepts</button>
                             </div>
 
-                            <div id="chatMessages" class="chat-messages">
+                            <div id="chatMessages" class="chat-messages" role="log" aria-live="polite">
                                 <div class="message message-ai">
                                     <div class="message-content">
-                                        Hello! 👋 I have reviewed your presentation and speaker notes. Ask me any question, ask for clarification on a slide, or request a custom practice question!
+                                        Hello! 👋 I am your ChatGPT AI Teacher. I have parsed all your slides and speaker notes. Ask me any question, ask for clarification, or select a Teacher Mode above!
                                     </div>
                                 </div>
                             </div>
 
                             <div class="chat-input-wrapper">
-                                <input type="text" id="chatInput" placeholder="Ask anything about the presentation slides or presenter notes..." />
-                                <button id="sendChatBtn" class="btn btn-primary"><i class="fa-solid fa-paper-plane"></i></button>
+                                <input type="text" id="chatInput" placeholder="Ask anything about the presentation slides or presenter notes..." aria-label="Type your study question for the AI Teacher" />
+                                <button id="sendChatBtn" class="btn btn-primary" aria-label="Send message"><i class="fa-solid fa-paper-plane" aria-hidden="true"></i></button>
                             </div>
                         </div>
                     </div>

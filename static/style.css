@@ -26,6 +26,11 @@
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
 }
 
+*:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
 body {
     background-color: var(--bg-main);
     color: var(--text-dark);
@@ -36,6 +41,36 @@ body {
     max-width: 1200px;
     margin: 0 auto;
     padding: 20px;
+}
+
+/* Error Banner */
+.error-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+    padding: 12px 18px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.error-banner-icon {
+    font-size: 18px;
+    color: #dc2626;
+}
+
+.error-close-btn {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    color: #991b1b;
+    cursor: pointer;
+    line-height: 1;
 }
 
 /* Navbar */
@@ -59,7 +94,7 @@ body {
 
 .logo-icon {
     font-size: 28px;
-    color: #d97706; /* PPT Orange/Amber */
+    color: #d97706;
 }
 
 .logo-text h1 {
@@ -418,6 +453,24 @@ body {
     font-weight: 700;
     padding: 4px 10px;
     border-radius: 20px;
+}
+
+.teach-slide-btn {
+    background: #e0e7ff;
+    color: var(--primary);
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.teach-slide-btn:hover {
+    background: #c7d2fe;
 }
 
 .slide-card-body {

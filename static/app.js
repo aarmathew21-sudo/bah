@@ -13,7 +13,44 @@ document.addEventListener('DOMContentLoaded', () => {
     initSearch();
     initTabs();
     initChat();
+    checkCurrentSession();
 });
+
+function showError(msg) {
+    const banner = document.getElementById('errorBanner');
+    const text = document.getElementById('errorMessage');
+    if (banner && text) {
+        text.textContent = msg;
+        banner.classList.remove('hidden');
+    }
+}
+
+function hideError() {
+    const banner = document.getElementById('errorBanner');
+    if (banner) {
+        banner.classList.add('hidden');
+    }
+}
+
+// Session restoration on page load/refresh
+async function checkCurrentSession() {
+    try {
+        const res = await fetch('/api/current');
+        const data = await res.json();
+        if (data.loaded) {
+            presentationData = data;
+            renderSlides(data.slides);
+            document.getElementById('loadedFileName').textContent = data.filename;
+            document.getElementById('slideCountBadge').textContent = `${data.total_slides} Slides Extracted`;
+            document.getElementById('tabSlideCount').textContent = data.total_slides;
+
+            document.getElementById('uploadSection').classList.add('hidden');
+            document.getElementById('workspaceSection').classList.remove('hidden');
+        }
+    } catch (err) {
+        console.log('Session check:', err.message);
+    }
+}
 
 // API Key Logic
 function initApiKey() {
@@ -33,7 +70,7 @@ function initApiKey() {
         if (val) {
             localStorage.setItem('gemini_api_key', val);
             updateBadge(true);
-            alert('Gemini API Key saved!');
+            alert('Gemini API Key saved for this session!');
         } else {
             localStorage.removeItem('gemini_api_key');
             updateBadge(false);
@@ -71,6 +108,7 @@ function initSampleDemo() {
 }
 
 async function loadSampleDemo() {
+    hideError();
     const uploadSection = document.getElementById('uploadSection');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const workspaceSection = document.getElementById('workspaceSection');
@@ -80,7 +118,10 @@ async function loadSampleDemo() {
 
     try {
         const response = await fetch('/api/sample', { method: 'POST' });
-        if (!response.ok) throw new Error('Failed to load sample demo');
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Failed to load sample demo');
+        }
 
         const data = await response.json();
         presentationData = data;
@@ -94,7 +135,7 @@ async function loadSampleDemo() {
         workspaceSection.classList.remove('hidden');
 
     } catch (err) {
-        alert('Error loading sample presentation: ' + err.message);
+        showError('Error loading sample presentation: ' + err.message);
         loadingOverlay.classList.add('hidden');
         uploadSection.classList.remove('hidden');
     }
@@ -172,8 +213,9 @@ function initFileUpload() {
 }
 
 async function handleFileUpload(file) {
+    hideError();
     if (!file.name.toLowerCase().endsWith('.pptx')) {
-        alert('Please upload a valid PowerPoint (.pptx) file.');
+        showError('Please upload a valid PowerPoint (.pptx) file.');
         return;
     }
 
@@ -211,7 +253,7 @@ async function handleFileUpload(file) {
         workspaceSection.classList.remove('hidden');
 
     } catch (err) {
-        alert('Error parsing PowerPoint file: ' + err.message);
+        showError('Error parsing PowerPoint file: ' + err.message);
         loadingOverlay.classList.add('hidden');
         uploadSection.classList.remove('hidden');
     }
@@ -229,8 +271,13 @@ function renderSlides(slides) {
         const header = document.createElement('div');
         header.className = 'slide-card-header';
         header.innerHTML = `
-            <span class="slide-title">${escapeHtml(slide.title)}</span>
-            <span class="slide-num-badge">Slide ${slide.slide_number}</span>
+            <div>
+                <span class="slide-title">${escapeHtml(slide.title)}</span>
+                <span class="slide-num-badge" style="margin-left: 8px;">Slide ${slide.slide_number}</span>
+            </div>
+            <button class="teach-slide-btn" onclick="teachSlide(${slide.slide_number}, '${escapeHtml(slide.title).replace(/'/g, "\\'")}')">
+                <i class="fa-solid fa-graduation-cap"></i> Teach Me This Slide
+            </button>
         `;
 
         const body = document.createElement('div');
@@ -283,6 +330,14 @@ function renderSlides(slides) {
     });
 }
 
+function teachSlide(num, title) {
+    // Switch to Chat tab
+    const chatTabBtn = document.querySelector('.tab-btn[data-tab="chatTab"]');
+    if (chatTabBtn) chatTabBtn.click();
+
+    sendSuggestedQuestion(`Teach me Slide ${num}: "${title}". Explain all points and hidden speaker notes in simple terms.`);
+}
+
 // Navigation Tabs
 function initTabs() {
     const tabBtns = document.querySelectorAll('.tab-btn');
@@ -290,10 +345,14 @@ function initTabs() {
         btn.addEventListener('click', () => {
             const targetTab = btn.getAttribute('data-tab');
 
-            tabBtns.forEach(b => b.classList.remove('active'));
+            tabBtns.forEach(b => {
+                b.classList.remove('active');
+                b.setAttribute('aria-selected', 'false');
+            });
             document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
 
             btn.classList.add('active');
+            btn.setAttribute('aria-selected', 'true');
             document.getElementById(targetTab).classList.add('active');
         });
     });
@@ -305,6 +364,7 @@ function initTabs() {
 
 // 1. Study Guide Summary
 async function loadStudySummary() {
+    hideError();
     const container = document.getElementById('summaryContainer');
     container.innerHTML = `<div class="loading-overlay"><div class="spinner"></div><p>Generating comprehensive study guide...</p></div>`;
 
@@ -314,6 +374,12 @@ async function loadStudySummary() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ api_key: getApiKey() })
         });
+        
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to generate study guide');
+        }
+
         const data = await res.json();
 
         let html = `
@@ -367,12 +433,14 @@ async function loadStudySummary() {
 
         container.innerHTML = html;
     } catch (err) {
-        container.innerHTML = `<p style="color: var(--danger);">Failed to load study guide: ${err.message}</p>`;
+        showError('Failed to load study guide: ' + err.message);
+        container.innerHTML = `<p class="placeholder-state" style="color: var(--danger);">${escapeHtml(err.message)}</p>`;
     }
 }
 
 // 2. Flashcards
 async function loadFlashcards() {
+    hideError();
     const container = document.getElementById('flashcardsContainer');
     container.innerHTML = `<div class="loading-overlay"><div class="spinner"></div><p>Creating flashcards...</p></div>`;
 
@@ -382,6 +450,12 @@ async function loadFlashcards() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ api_key: getApiKey() })
         });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to generate flashcards');
+        }
+
         const data = await res.json();
         flashcardsList = data.flashcards || [];
         currentFlashcardIndex = 0;
@@ -394,7 +468,8 @@ async function loadFlashcards() {
         renderCurrentFlashcard();
 
     } catch (err) {
-        container.innerHTML = `<p style="color: var(--danger);">Failed to load flashcards: ${err.message}</p>`;
+        showError('Failed to load flashcards: ' + err.message);
+        container.innerHTML = `<p class="placeholder-state" style="color: var(--danger);">${escapeHtml(err.message)}</p>`;
     }
 }
 
@@ -403,7 +478,7 @@ function renderCurrentFlashcard() {
     const card = flashcardsList[currentFlashcardIndex];
 
     container.innerHTML = `
-        <div class="flashcard-wrapper" onclick="this.querySelector('.flashcard').classList.toggle('flipped')">
+        <div class="flashcard-wrapper" onclick="this.querySelector('.flashcard').classList.toggle('flipped')" role="button" tabindex="0" aria-label="Flip flashcard">
             <div class="flashcard">
                 <div class="card-face card-front">
                     <span class="card-category">${escapeHtml(card.category || 'Concept')}</span>
@@ -418,11 +493,11 @@ function renderCurrentFlashcard() {
             </div>
         </div>
         <div class="flashcard-controls">
-            <button class="btn btn-outline" onclick="prevFlashcard()" ${currentFlashcardIndex === 0 ? 'disabled' : ''}>
+            <button class="btn btn-outline" onclick="prevFlashcard()" ${currentFlashcardIndex === 0 ? 'disabled' : ''} aria-label="Previous card">
                 <i class="fa-solid fa-arrow-left"></i> Previous
             </button>
             <span class="deck-progress">Card ${currentFlashcardIndex + 1} of ${flashcardsList.length}</span>
-            <button class="btn btn-primary" onclick="nextFlashcard()" ${currentFlashcardIndex === flashcardsList.length - 1 ? 'disabled' : ''}>
+            <button class="btn btn-primary" onclick="nextFlashcard()" ${currentFlashcardIndex === flashcardsList.length - 1 ? 'disabled' : ''} aria-label="Next card">
                 Next <i class="fa-solid fa-arrow-right"></i>
             </button>
         </div>
@@ -445,6 +520,7 @@ function prevFlashcard() {
 
 // 3. Quiz
 async function loadQuiz() {
+    hideError();
     const container = document.getElementById('quizContainer');
     container.innerHTML = `<div class="loading-overlay"><div class="spinner"></div><p>Generating practice questions...</p></div>`;
 
@@ -454,6 +530,12 @@ async function loadQuiz() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ api_key: getApiKey() })
         });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to generate quiz');
+        }
+
         const data = await res.json();
         quizList = data.quiz || [];
 
@@ -465,7 +547,8 @@ async function loadQuiz() {
         renderQuiz(quizList);
 
     } catch (err) {
-        container.innerHTML = `<p style="color: var(--danger);">Failed to load quiz: ${err.message}</p>`;
+        showError('Failed to load quiz: ' + err.message);
+        container.innerHTML = `<p class="placeholder-state" style="color: var(--danger);">${escapeHtml(err.message)}</p>`;
     }
 }
 
@@ -534,16 +617,20 @@ function sendSuggestedQuestion(qText) {
 }
 
 async function handleSendChat() {
+    hideError();
     const input = document.getElementById('chatInput');
     const text = input.value.trim();
     if (!text) return;
+
+    const teacherModeSelect = document.getElementById('teacherModeSelect');
+    const selectedMode = teacherModeSelect ? teacherModeSelect.value : 'tutor';
 
     input.value = '';
 
     appendChatMessage('user', text);
     chatHistory.push({ role: 'user', content: text });
 
-    const typingId = appendChatMessage('ai', 'Thinking...', true);
+    const typingId = appendChatMessage('ai', 'ChatGPT AI Teacher is thinking...', true);
 
     try {
         const res = await fetch('/api/study/chat', {
@@ -551,10 +638,16 @@ async function handleSendChat() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message: text,
+                teacher_mode: selectedMode,
                 chat_history: chatHistory,
                 api_key: getApiKey()
             })
         });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Chat request failed');
+        }
 
         const data = await res.json();
         removeChatMessage(typingId);
@@ -565,6 +658,7 @@ async function handleSendChat() {
 
     } catch (err) {
         removeChatMessage(typingId);
+        showError('Chat error: ' + err.message);
         appendChatMessage('ai', 'Error: ' + err.message);
     }
 }

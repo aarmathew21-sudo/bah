@@ -1,7 +1,11 @@
 import os
 import json
 import re
+import logging
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger("ppt_study_ai")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 try:
     from google import genai
@@ -11,18 +15,44 @@ except ImportError:
     HAS_GENAI = False
 
 
+def validate_and_sanitize_api_key(api_key: Optional[str]) -> Optional[str]:
+    """
+    Validates client-supplied API key format.
+    Never logs plaintext API keys.
+    """
+    if not api_key:
+        return None
+    key = api_key.strip()
+    # Basic sanity check for Gemini API key format (typically starts with AIza or non-empty string > 10 chars)
+    if len(key) < 10 or any(c in key for c in ["\n", "\r", " "]):
+        logger.warning("Rejected invalid API key format supplied by client.")
+        return None
+    return key
+
+
+def mask_api_key(key: Optional[str]) -> str:
+    """Helper for safe logging."""
+    if not key:
+        return "None"
+    if len(key) <= 8:
+        return "***"
+    return f"{key[:4]}...{key[-4:]}"
+
+
 def _get_genai_client(api_key: Optional[str] = None):
-    key = api_key or os.environ.get("GEMINI_API_KEY")
+    key = validate_and_sanitize_api_key(api_key) or os.environ.get("GEMINI_API_KEY")
     if not key or not HAS_GENAI:
         return None
     try:
+        logger.info(f"Initializing GenAI client with key: {mask_api_key(key)}")
         return genai.Client(api_key=key)
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to create GenAI client: {str(e)}")
         return None
 
 
 def generate_study_summary(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> Dict[str, Any]:
-    """Generates structured overview and key study topics formatted like a personal tutor guide."""
+    """Generates structured overview and key study topics."""
     digest = ppt_data.get("full_digest", "")
     slides = ppt_data.get("slides", [])
     
@@ -64,7 +94,7 @@ Respond ONLY with the JSON block.
             txt = re.sub(r'\s*```$', '', txt)
             return json.loads(txt)
         except Exception as e:
-            print(f"Gemini API error in summary generation: {e}")
+            logger.error(f"Gemini API error in summary generation: {str(e)}")
 
     # Fallback smart extraction
     concepts = []
@@ -131,7 +161,7 @@ Respond ONLY with the JSON array.
             if isinstance(cards, list) and len(cards) > 0:
                 return cards
         except Exception as e:
-            print(f"Gemini API error in flashcard generation: {e}")
+            logger.error(f"Gemini API error in flashcard generation: {str(e)}")
 
     # Fallback cards
     flashcards = []
@@ -164,7 +194,7 @@ Respond ONLY with the JSON array.
 
 
 def generate_quiz(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Generates multiple-choice quiz questions with teacher explanations."""
+    """Generates multiple-choice quiz questions."""
     digest = ppt_data.get("full_digest", "")
     slides = ppt_data.get("slides", [])
 
@@ -199,7 +229,7 @@ Respond ONLY with the JSON array.
             if isinstance(quiz, list) and len(quiz) > 0:
                 return quiz
         except Exception as e:
-            print(f"Gemini API error in quiz generation: {e}")
+            logger.error(f"Gemini API error in quiz generation: {str(e)}")
 
     # Fallback quiz
     quiz = []
@@ -274,9 +304,10 @@ Behavior Rules:
             )
             return response.text.strip()
         except Exception as e:
+            logger.error(f"Gemini API chat error: {str(e)}")
             return f"Error connecting to AI Teacher: {str(e)}"
 
-    # Smart local fallback answer formatted like an AI teacher
+    # Smart local fallback answer
     user_lower = user_message.lower()
     matches = []
     for s in ppt_data.get("slides", []):
@@ -284,9 +315,11 @@ Behavior Rules:
         if any(w in combined.lower() for w in user_lower.split() if len(w) > 3):
             matches.append(s)
 
+    mode_prefix = f"[{teacher_mode.upper()} MODE] " if teacher_mode != "tutor" else ""
+
     if matches:
         target = matches[0]
-        res = f"👨‍🏫 **AI Teacher Explanation for Slide {target['slide_number']}: {target['title']}**\n\n"
+        res = f"👨‍🏫 **{mode_prefix}AI Teacher Explanation for Slide {target['slide_number']}: {target['title']}**\n\n"
         if target.get("text_content"):
             res += "Here are the core takeaways in simple terms:\n"
             for pt in target["text_content"]:
@@ -300,4 +333,4 @@ Behavior Rules:
         res += "\n\n*(Tip: Enter a Gemini API Key in settings to unlock full conversational ChatGPT Teacher AI!)*"
         return res
 
-    return "👨‍🏫 **AI Teacher**: I couldn't find a direct reference to that in the slides or speaker notes. Try asking about a specific slide topic, or ask me: *'Teach me Slide 1'*!\n*(Add a Gemini API Key for unrestricted conversational AI tutoring!)*"
+    return f"👨‍🏫 **AI Teacher**: {mode_prefix}I couldn't find a direct reference to that in the slides or speaker notes. Try asking about a specific slide topic, or ask me: *'Teach me Slide 1'*!\n*(Add a Gemini API Key for unrestricted conversational AI tutoring!)*"
