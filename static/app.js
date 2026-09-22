@@ -4,7 +4,6 @@ let currentFlashcardIndex = 0;
 let flashcardsList = [];
 let quizList = [];
 let chatHistory = [];
-let currentSpeech = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     initApiKey();
@@ -42,10 +41,9 @@ function speakText(text) {
 
     window.speechSynthesis.cancel();
     
-    // Clean markdown symbols for natural reading
     const cleanText = text
         .replace(/[*#_`~]/g, '')
-        .replace(/📌|👨‍🏫|💡|🧠|👋|📌/g, '')
+        .replace(/📌|👨‍ish|💡|🧠|👋|📌/g, '')
         .trim();
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
@@ -418,7 +416,7 @@ function initTabs() {
     });
 
     document.getElementById('generateSummaryBtn').addEventListener('click', loadStudySummary);
-    document.getElementById('generateFlashcardsBtn').addEventListener('click', loadFlashcards);
+    document.getElementById('generateFlashcardsBtn').addEventListener('click', regenerateFlashcards);
     document.getElementById('generateQuizBtn').addEventListener('click', loadQuiz);
 }
 
@@ -498,30 +496,36 @@ async function loadStudySummary() {
     }
 }
 
-// 2. Flashcards
+// 2. Flashcards (SM-2 Spaced Repetition)
 async function loadFlashcards() {
     hideError();
     const container = document.getElementById('flashcardsContainer');
-    container.innerHTML = `<div class="loading-overlay"><div class="spinner"></div><p>Creating flashcards...</p></div>`;
 
     try {
-        const res = await fetch('/api/study/flashcards', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_key: getApiKey() })
-        });
+        const res = await fetch('/api/study/flashcards/due');
 
         if (!res.ok) {
             const err = await res.json();
-            throw new Error(err.detail || 'Failed to generate flashcards');
+            throw new Error(err.detail || 'Failed to fetch due flashcards');
         }
 
         const data = await res.json();
-        flashcardsList = data.flashcards || [];
+        flashcardsList = data.due_flashcards || [];
         currentFlashcardIndex = 0;
 
+        const dueBadge = document.getElementById('dueCardsBadge');
+        if (dueBadge) {
+            dueBadge.textContent = `${data.total_due || 0} Cards Due Today`;
+        }
+
         if (flashcardsList.length === 0) {
-            container.innerHTML = `<p class="placeholder-state">No flashcards generated.</p>`;
+            container.innerHTML = `
+                <div class="placeholder-state">
+                    <i class="fa-solid fa-circle-check placeholder-icon" style="color: var(--success);"></i>
+                    <h3>🎉 All Caught Up!</h3>
+                    <p>No cards due for review today. Great job! Come back later for your next spaced repetition review.</p>
+                </div>
+            `;
             return;
         }
 
@@ -533,8 +537,27 @@ async function loadFlashcards() {
     }
 }
 
+async function regenerateFlashcards() {
+    try {
+        const res = await fetch('/api/study/flashcards', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: getApiKey() })
+        });
+        if (!res.ok) throw new Error('Failed to regenerate flashcards');
+        await loadFlashcards();
+    } catch (err) {
+        showError(err.message);
+    }
+}
+
 function renderCurrentFlashcard() {
     const container = document.getElementById('flashcardsContainer');
+    if (!flashcardsList || flashcardsList.length === 0) {
+        loadFlashcards();
+        return;
+    }
+
     const card = flashcardsList[currentFlashcardIndex];
 
     container.innerHTML = `
@@ -546,35 +569,55 @@ function renderCurrentFlashcard() {
                     <span class="card-instruction"><i class="fa-solid fa-hand-pointer"></i> Click card to flip</span>
                 </div>
                 <div class="card-face card-back">
-                    <span class="card-category">Answer / Explanation</span>
-                    <div class="card-text">${escapeHtml(card.back)}</div>
-                    <span class="card-instruction"><i class="fa-solid fa-rotate"></i> Click to flip back</span>
+                    <span class="card-category">Answer & SM-2 Rating</span>
+                    <div class="card-text" style="font-size: 15px;">${escapeHtml(card.back)}</div>
+                    
+                    <div class="sm2-rating-container" onclick="event.stopPropagation()">
+                        <button class="sm2-rating-btn btn-again" onclick="submitCardReview('${card.card_id}', 'again')">
+                            <span>🔴 Again</span>
+                            <span style="font-size: 10px; opacity: 0.8;">1 day</span>
+                        </button>
+                        <button class="sm2-rating-btn btn-hard" onclick="submitCardReview('${card.card_id}', 'hard')">
+                            <span>🟠 Hard</span>
+                            <span style="font-size: 10px; opacity: 0.8;">Harder</span>
+                        </button>
+                        <button class="sm2-rating-btn btn-good" onclick="submitCardReview('${card.card_id}', 'good')">
+                            <span>🟢 Good</span>
+                            <span style="font-size: 10px; opacity: 0.8;">Normal</span>
+                        </button>
+                        <button class="sm2-rating-btn btn-easy" onclick="submitCardReview('${card.card_id}', 'easy')">
+                            <span>🔵 Easy</span>
+                            <span style="font-size: 10px; opacity: 0.8;">Bonus</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
         <div class="flashcard-controls">
-            <button class="btn btn-outline" onclick="prevFlashcard()" ${currentFlashcardIndex === 0 ? 'disabled' : ''} aria-label="Previous card">
-                <i class="fa-solid fa-arrow-left"></i> Previous
-            </button>
-            <span class="deck-progress">Card ${currentFlashcardIndex + 1} of ${flashcardsList.length}</span>
-            <button class="btn btn-primary" onclick="nextFlashcard()" ${currentFlashcardIndex === flashcardsList.length - 1 ? 'disabled' : ''} aria-label="Next card">
-                Next <i class="fa-solid fa-arrow-right"></i>
-            </button>
+            <span class="deck-progress">Due Card ${currentFlashcardIndex + 1} of ${flashcardsList.length}</span>
         </div>
     `;
 }
 
-function nextFlashcard() {
-    if (currentFlashcardIndex < flashcardsList.length - 1) {
-        currentFlashcardIndex++;
-        renderCurrentFlashcard();
-    }
-}
+async function submitCardReview(cardId, rating) {
+    hideError();
+    try {
+        const res = await fetch('/api/study/flashcards/review', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ card_id: cardId, rating: rating })
+        });
 
-function prevFlashcard() {
-    if (currentFlashcardIndex > 0) {
-        currentFlashcardIndex--;
-        renderCurrentFlashcard();
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to record card review');
+        }
+
+        // Advance to next due card
+        await loadFlashcards();
+
+    } catch (err) {
+        showError('Review error: ' + err.message);
     }
 }
 
@@ -713,7 +756,7 @@ async function handleSendChat() {
         removeChatMessage(typingId);
 
         const reply = data.reply || 'Sorry, I could not generate a response.';
-        appendChatMessage('ai', reply, false, true); // true for read aloud button
+        appendChatMessage('ai', reply, false, true);
         chatHistory.push({ role: 'assistant', content: reply });
 
     } catch (err) {

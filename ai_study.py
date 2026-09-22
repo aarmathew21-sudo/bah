@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import hashlib
 import logging
 from typing import List, Dict, Any, Optional
 
@@ -16,14 +17,10 @@ except ImportError:
 
 
 def validate_and_sanitize_api_key(api_key: Optional[str]) -> Optional[str]:
-    """
-    Validates client-supplied API key format.
-    Never logs plaintext API keys.
-    """
+    """Validates client-supplied API key format."""
     if not api_key:
         return None
     key = api_key.strip()
-    # Basic sanity check for Gemini API key format (typically starts with AIza or non-empty string > 10 chars)
     if len(key) < 10 or any(c in key for c in ["\n", "\r", " "]):
         logger.warning("Rejected invalid API key format supplied by client.")
         return None
@@ -49,6 +46,12 @@ def _get_genai_client(api_key: Optional[str] = None):
     except Exception as e:
         logger.error(f"Failed to create GenAI client: {str(e)}")
         return None
+
+
+def generate_stable_card_id(front_text: str) -> str:
+    """Generates a stable 16-char SHA256 hash for card question text."""
+    clean = front_text.strip().lower()
+    return hashlib.sha256(clean.encode('utf-8')).hexdigest()[:16]
 
 
 def generate_study_summary(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> Dict[str, Any]:
@@ -127,10 +130,11 @@ Respond ONLY with the JSON block.
 
 
 def generate_flashcards(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> List[Dict[str, str]]:
-    """Generates active recall study flashcards."""
+    """Generates active recall study flashcards with stable card IDs for SM-2 spaced repetition tracking."""
     digest = ppt_data.get("full_digest", "")
     slides = ppt_data.get("slides", [])
 
+    cards = []
     client = _get_genai_client(api_key)
     if client:
         prompt = f"""You are a master educator. Create 8 to 15 active-recall flashcards based on these slides and presenter notes.
@@ -141,7 +145,6 @@ Presentation Data:
 Return a valid JSON array of objects with schema:
 [
   {{
-    "id": 1,
     "front": "Question or term requiring active recall",
     "back": "Clear, concise answer with key takeaway",
     "category": "Slide reference or topic"
@@ -157,40 +160,40 @@ Respond ONLY with the JSON array.
             txt = response.text.strip()
             txt = re.sub(r'^```json\s*', '', txt)
             txt = re.sub(r'\s*```$', '', txt)
-            cards = json.loads(txt)
-            if isinstance(cards, list) and len(cards) > 0:
-                return cards
+            parsed_cards = json.loads(txt)
+            if isinstance(parsed_cards, list) and len(parsed_cards) > 0:
+                cards = parsed_cards
         except Exception as e:
             logger.error(f"Gemini API error in flashcard generation: {str(e)}")
 
-    # Fallback cards
-    flashcards = []
-    card_id = 1
-    for s in slides:
-        num = s["slide_number"]
-        title = s["title"]
-        notes = s.get("speaker_notes", "")
-        text_content = s.get("text_content", [])
+    if not cards:
+        # Fallback cards
+        for s in slides:
+            num = s["slide_number"]
+            title = s["title"]
+            notes = s.get("speaker_notes", "")
+            text_content = s.get("text_content", [])
 
-        if text_content:
-            flashcards.append({
-                "id": card_id,
-                "front": f"What are the main concepts covered in: '{title}'?",
-                "back": "\n• ".join([""] + text_content),
-                "category": f"Slide {num}"
-            })
-            card_id += 1
+            if text_content:
+                cards.append({
+                    "front": f"What are the main concepts covered in: '{title}'?",
+                    "back": "\n• ".join([""] + text_content),
+                    "category": f"Slide {num}"
+                })
 
-        if notes:
-            flashcards.append({
-                "id": card_id,
-                "front": f"What hidden presenter note is under '{title}'?",
-                "back": notes,
-                "category": f"Slide {num} Notes"
-            })
-            card_id += 1
+            if notes:
+                cards.append({
+                    "front": f"What hidden presenter note is under '{title}'?",
+                    "back": notes,
+                    "category": f"Slide {num} Notes"
+                })
 
-    return flashcards
+    # Assign stable card_id and index
+    for idx, card in enumerate(cards, start=1):
+        card["card_id"] = generate_stable_card_id(card.get("front", ""))
+        card["id"] = idx
+
+    return cards
 
 
 def generate_quiz(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -258,14 +261,7 @@ def answer_study_chat(
     teacher_mode: str = "tutor",
     api_key: Optional[str] = None
 ) -> str:
-    """
-    Answers student questions adopting a ChatGPT Teacher persona.
-    Teacher modes:
-    - 'tutor': Encouraging, clear, interactive teacher.
-    - 'eli5': Explain like I'm 5 with simple analogies.
-    - 'quiz_me': Teacher poses Socratic questions to test the student.
-    - 'notes_deepdive': Focuses on hidden presenter speaker notes.
-    """
+    """Answers student questions adopting a ChatGPT Teacher persona."""
     digest = ppt_data.get("full_digest", "")
     client = _get_genai_client(api_key)
 

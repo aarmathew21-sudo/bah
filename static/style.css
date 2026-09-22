@@ -590,7 +590,7 @@ body {
     line-height: 1.5;
 }
 
-/* Flashcards */
+/* Flashcards SM-2 */
 .flashcard-deck-container {
     max-width: 550px;
     margin: 0 auto;
@@ -598,7 +598,7 @@ body {
 
 .flashcard-wrapper {
     perspective: 1000px;
-    height: 280px;
+    height: 320px;
     margin-bottom: 20px;
     cursor: pointer;
 }
@@ -623,7 +623,7 @@ body {
     height: 100%;
     backface-visibility: hidden;
     border-radius: 16px;
-    padding: 30px;
+    padding: 24px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -650,17 +650,62 @@ body {
 }
 
 .card-text {
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 600;
     text-align: center;
     line-height: 1.5;
     margin: auto 0;
+
 }
 
 .card-instruction {
     font-size: 12px;
     text-align: center;
     opacity: 0.7;
+}
+
+/* SM-2 Rating Buttons Bar */
+.sm2-rating-container {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.sm2-rating-btn {
+    border: none;
+    padding: 8px 4px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    color: white;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.sm2-rating-btn:hover {
+    transform: translateY(-2px);
+    opacity: 0.9;
+}
+
+.btn-again {
+    background: #ef4444;
+}
+
+.btn-hard {
+    background: #f97316;
+}
+
+.btn-good {
+    background: #22c55e;
+}
+
+.btn-easy {
+    background: #3b82f6;
 }
 
 .flashcard-controls {

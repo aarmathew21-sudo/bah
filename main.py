@@ -22,7 +22,9 @@ from database import (
     async_save_session_presentation,
     async_get_session_presentation,
     async_save_study_cache,
-    async_get_study_cache
+    async_get_study_cache,
+    async_record_card_review,
+    async_get_due_flashcards
 )
 from create_sample_ppt import create_sample_presentation
 
@@ -30,11 +32,10 @@ logger = logging.getLogger("ppt_main_app")
 
 app = FastAPI(
     title="PPT & PDF Text & Notes AI Study Assistant",
-    description="Multi-user FastAPI application for PowerPoint (.pptx) & PDF (.pdf) parsing and ChatGPT AI Tutoring."
+    description="Multi-user FastAPI application for PowerPoint (.pptx) & PDF (.pdf) parsing, ChatGPT AI Tutoring, and SM-2 Spaced Repetition."
 )
 
-# Configure trusted origins for CORS (defaulting to app's own localhost origins)
-# Prevents wildcard credential reflection security vulnerabilities
+# Configure trusted origins for CORS
 raw_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000")
 allowed_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
 
@@ -81,7 +82,7 @@ def rate_limit_study_api(session_id: str = Depends(get_session_id)):
 @app.on_event("startup")
 def startup_event():
     init_db()
-    logger.info(f"Database initialized with threadpool async wrappers and session cleanup. Trusted CORS origins: {allowed_origins}")
+    logger.info(f"Database initialized with SM-2 spaced repetition support. Trusted CORS origins: {allowed_origins}")
 
 
 class ChatRequest(BaseModel):
@@ -92,6 +93,10 @@ class ChatRequest(BaseModel):
 
 class StudyRequest(BaseModel):
     api_key: Optional[str] = Field(None, description="Optional Gemini API key")
+
+class ReviewRequest(BaseModel):
+    card_id: str = Field(..., description="Stable card ID hash")
+    rating: str = Field(..., description="Rating: again, hard, good, easy")
 
 
 @app.post("/api/upload")
@@ -108,14 +113,11 @@ async def upload_document(
     try:
         content = await file.read()
         
-        # 1. Size Validation (50 MB limit)
         if len(content) > 50 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="File too large. Maximum allowed size is 50 MB.")
 
-        # 2. Hard file validation (ZIP / PPTX / PDF format check)
         file_type = validate_upload_file(content, filename=file.filename, max_size_mb=50)
 
-        # 3. Parse presentation / PDF content
         if file_type == "pdf":
             parsed_data = extract_pdf_content(content)
         else:
@@ -123,7 +125,6 @@ async def upload_document(
 
         parsed_data["filename"] = file.filename
 
-        # 4. Save to SQLite DB scoped to session (offloaded to threadpool)
         await async_save_session_presentation(session_id, parsed_data)
         logger.info(f"Successfully processed {file_type.upper()} upload for session {session_id[:8]}... ({parsed_data['total_slides']} pages/slides)")
 
@@ -225,6 +226,40 @@ async def get_flashcards(
     cards = generate_flashcards(ppt_data, api_key=req.api_key)
     await async_save_study_cache(session_id, "flashcards", cards)
     return {"flashcards": cards}
+
+
+@app.get("/api/study/flashcards/due")
+async def get_due_cards(
+    request: Request,
+    response: Response,
+    session_id: str = Depends(get_session_id)
+):
+    """Returns flashcards due for SM-2 review for this session."""
+    ppt_data = await async_get_session_presentation(session_id)
+    if not ppt_data:
+        raise HTTPException(status_code=400, detail="No document uploaded yet for your session.")
+    
+    cached = await async_get_study_cache(session_id, "flashcards")
+    if not cached:
+        cards = generate_flashcards(ppt_data)
+        await async_save_study_cache(session_id, "flashcards", cards)
+
+    due_data = await async_get_due_flashcards(session_id)
+    return due_data
+
+
+@app.post("/api/study/flashcards/review")
+async def review_card(
+    req: ReviewRequest,
+    session_id: str = Depends(get_session_id)
+):
+    """Updates SM-2 interval and ease factor for a reviewed flashcard."""
+    valid_ratings = ["again", "hard", "good", "easy"]
+    if req.rating.lower() not in valid_ratings:
+        raise HTTPException(status_code=400, detail=f"Invalid rating '{req.rating}'. Must be one of: {valid_ratings}")
+
+    result = await async_record_card_review(session_id, req.card_id, req.rating)
+    return {"success": True, "review": result}
 
 
 @app.post("/api/study/quiz", dependencies=[Depends(rate_limit_study_api)])

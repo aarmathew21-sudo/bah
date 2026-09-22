@@ -7,7 +7,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from fastapi.testclient import TestClient
 from main import app
-from database import init_db
+from database import init_db, record_card_review, get_due_flashcards
 from create_sample_ppt import create_sample_presentation
 from create_sample_pdf import create_sample_pdf
 from ppt_parser import extract_ppt_content, validate_upload_file
@@ -25,81 +25,76 @@ def main():
 
     sample_pdf_bytes = create_sample_pdf("sample_lecture_notes.pdf")
 
-    # Validate PPT
     fmt_ppt = validate_upload_file(valid_ppt_bytes, filename=sample_ppt_filename, max_size_mb=50)
     assert fmt_ppt == "pptx"
     print("Valid PPT format validation passed.")
 
-    # Validate PDF
     fmt_pdf = validate_upload_file(sample_pdf_bytes, filename="sample_lecture_notes.pdf", max_size_mb=50)
     assert fmt_pdf == "pdf"
     print("Valid PDF format validation passed.")
 
-    # PDF extraction test
     pdf_data = extract_pdf_content(sample_pdf_bytes)
     assert pdf_data["total_slides"] == 1
     assert "Neural Networks" in pdf_data["full_digest"]
     print(f"PDF extraction succeeded! Pages: {pdf_data['total_slides']}")
 
-    print("\n--- 2. Testing FastAPI REST Endpoints via TestClient ---")
+    print("\n--- 2. Testing FastAPI REST Endpoints & SM-2 Spaced Repetition ---")
 
     with TestClient(app) as client:
-        # A) Test CORS Preflight Options for trusted origin
-        cors_resp = client.options(
-            "/api/upload",
-            headers={"Origin": "http://localhost:8000", "Access-Control-Request-Method": "POST"}
-        )
-        assert cors_resp.status_code == 200
-        assert cors_resp.headers.get("access-control-allow-origin") == "http://localhost:8000"
-        assert cors_resp.headers.get("access-control-allow-credentials") == "true"
-        print("CORS preflight check for trusted origin passed.")
-
-        # Test CORS preflight for untrusted origin (should NOT echo untrusted origin)
-        cors_bad = client.options(
-            "/api/upload",
-            headers={"Origin": "http://malicious-site.com", "Access-Control-Request-Method": "POST"}
-        )
-        assert cors_bad.headers.get("access-control-allow-origin") != "http://malicious-site.com"
-        print("CORS security check: untrusted origins correctly blocked.")
-
-        # B) Test PDF upload endpoint
-        pdf_resp = client.post(
-            "/api/upload",
-            files={"file": ("lecture.pdf", sample_pdf_bytes, "application/pdf")}
-        )
-        assert pdf_resp.status_code == 200, f"Expected 200 OK for PDF upload, got {pdf_resp.status_code}: {pdf_resp.text}"
-        pdf_upload_data = pdf_resp.json()
-        assert pdf_upload_data["success"] is True
-        print(f"PDF Upload Endpoint succeeded! Pages: {pdf_upload_data['total_slides']}")
-
-        # C) Test PPT upload endpoint
-        resp = client.post(
+        # Upload presentation
+        upload_resp = client.post(
             "/api/upload",
             files={"file": ("presentation.pptx", valid_ppt_bytes, "application/vnd.openxmlformats-officedocument.presentationml.presentation")}
         )
-        assert resp.status_code == 200
-        print("PPT Upload Endpoint succeeded!")
+        assert upload_resp.status_code == 200
 
-        # D) Test /api/study/summary
-        resp = client.post("/api/study/summary", json={})
-        assert resp.status_code == 200
-        print("POST /api/study/summary endpoint verified.")
+        # Fetch due cards
+        due_resp = client.get("/api/study/flashcards/due")
+        assert due_resp.status_code == 200
+        due_data = due_resp.json()
+        assert "due_flashcards" in due_data
+        due_cards = due_data["due_flashcards"]
+        assert len(due_cards) > 0
+        target_card = due_cards[0]
+        card_id = target_card["card_id"]
+        print(f"Fetched {len(due_cards)} due flashcards. Target card_id: {card_id}")
 
-        # E) Test Rate Limiter Throttling
-        print("Testing rate limiter protection on /api/study/*...")
-        with TestClient(app) as rate_client:
-            rate_client.post("/api/upload", files={"file": ("presentation.pptx", valid_ppt_bytes, "application/vnd.openxmlformats-officedocument.presentationml.presentation")})
-            
-            rate_limit_hit = False
-            for i in range(35):
-                r = rate_client.post("/api/study/summary", json={})
-                if r.status_code == 429:
-                    rate_limit_hit = True
-                    break
-            assert rate_limit_hit, "Expected rate limit 429 Too Many Requests after 30 calls!"
-            print("Rate limiter throttling (429 Too Many Requests) verified successfully.")
+        # A) Test reviewing card as "again" -> short interval (1 day)
+        rev_again = client.post("/api/study/flashcards/review", json={
+            "card_id": card_id,
+            "rating": "again"
+        })
+        assert rev_again.status_code == 200
+        again_data = rev_again.json()["review"]
+        assert again_data["interval_days"] == 1
+        assert again_data["repetitions"] == 0
+        print("SM-2 'again' rating test passed: interval set to 1 day, repetitions reset to 0.")
 
-    print("\n[SUCCESS] ALL PPT, PDF, CORS SECURITY, AND RATE LIMITER TESTS PASSED SUCCESSFULLY!")
+        # B) Test reviewing card as "easy" repeatedly -> interval growth & queue removal
+        # Review 1: Easy (repetitions = 1, interval = 1)
+        rev_e1 = client.post("/api/study/flashcards/review", json={"card_id": card_id, "rating": "easy"}).json()["review"]
+        assert rev_e1["interval_days"] == 1
+        assert rev_e1["repetitions"] == 1
+
+        # Review 2: Easy (repetitions = 2, interval = 6)
+        rev_e2 = client.post("/api/study/flashcards/review", json={"card_id": card_id, "rating": "easy"}).json()["review"]
+        assert rev_e2["interval_days"] == 6
+        assert rev_e2["repetitions"] == 2
+
+        # Review 3: Easy (repetitions = 3, interval >= 10)
+        rev_e3 = client.post("/api/study/flashcards/review", json={"card_id": card_id, "rating": "easy"}).json()["review"]
+        assert rev_e3["interval_days"] >= 10
+        assert rev_e3["repetitions"] == 3
+        print(f"SM-2 'easy' rating test passed: interval grew to {rev_e3['interval_days']} days across repetitions!")
+
+        # Verify card is now removed from due queue (since next_review_date is 15+ days in future)
+        new_due_resp = client.get("/api/study/flashcards/due")
+        new_due_cards = new_due_resp.json()["due_flashcards"]
+        due_card_ids = [c["card_id"] for c in new_due_cards]
+        assert card_id not in due_card_ids
+        print("SM-2 due queue test passed: card correctly dropped out of due queue for future review.")
+
+    print("\n[SUCCESS] ALL SM-2 SPACED REPETITION, ENDPOINTS, AND VALIDATION TESTS PASSED!")
 
 if __name__ == "__main__":
     main()

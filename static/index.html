@@ -103,7 +103,7 @@
                         <i class="fa-solid fa-book-open" aria-hidden="true"></i> Study Guide
                     </button>
                     <button class="tab-btn" data-tab="flashcardsTab" role="tab" aria-selected="false" id="tab-flashcards">
-                        <i class="fa-solid fa-clone" aria-hidden="true"></i> Flashcards
+                        <i class="fa-solid fa-clone" aria-hidden="true"></i> SM-2 Flashcards
                     </button>
                     <button class="tab-btn" data-tab="quizTab" role="tab" aria-selected="false" id="tab-quiz">
                         <i class="fa-solid fa-list-check" aria-hidden="true"></i> Practice Quiz
@@ -157,19 +157,22 @@
                         </div>
                     </div>
 
-                    <!-- 3. FLASHCARDS TAB -->
+                    <!-- 3. FLASHCARDS TAB (SM-2 Spaced Repetition) -->
                     <div id="flashcardsTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-flashcards">
                         <div class="panel-header flex-between">
                             <div>
-                                <h2><i class="fa-solid fa-clone" aria-hidden="true"></i> Active Recall Flashcards</h2>
-                                <p class="panel-subtitle">Click the card to flip and reveal the answer!</p>
+                                <h2>
+                                    <i class="fa-solid fa-clone" aria-hidden="true"></i> Spaced Repetition Flashcards (SM-2)
+                                    <span id="dueCardsBadge" class="badge badge-active" style="margin-left: 8px;">0 Cards Due</span>
+                                </h2>
+                                <p class="panel-subtitle">Review scheduled cards. Flip to reveal answer, then rate how well you remembered!</p>
                             </div>
                             <div style="display: flex; gap: 8px;">
                                 <button class="btn btn-outline" id="exportAnkiBtn" onclick="exportAnkiCSV()" title="Export flashcards to Anki CSV format">
                                     <i class="fa-solid fa-file-export" aria-hidden="true"></i> Export Anki CSV
                                 </button>
                                 <button id="generateFlashcardsBtn" class="btn btn-secondary" aria-label="Generate new flashcards">
-                                    <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Generate New Cards
+                                    <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Regenerate Cards
                                 </button>
                             </div>
                         </div>
@@ -177,7 +180,7 @@
                         <div id="flashcardsContainer" class="flashcard-deck-container">
                             <div class="placeholder-state">
                                 <i class="fa-solid fa-clone placeholder-icon" aria-hidden="true"></i>
-                                <p>Ready to practice active recall? Generate flashcards from document pages and speaker notes.</p>
+                                <p>Ready to practice active recall? Generate flashcards with SM-2 review scheduling.</p>
                                 <button class="btn btn-primary" onclick="loadFlashcards()">Generate Flashcards</button>
                             </div>
                         </div>

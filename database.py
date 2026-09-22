@@ -2,7 +2,8 @@ import sqlite3
 import json
 import os
 import logging
-from typing import Dict, Any, Optional
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, List
 from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger("ppt_study_db")
@@ -15,7 +16,7 @@ def get_db():
     return conn
 
 def init_db():
-    """Initializes SQLite database tables for multi-user session management and study caching."""
+    """Initializes SQLite database tables for multi-user session management, card reviews (SM-2), and study caching."""
     with get_db() as conn:
         cursor = conn.cursor()
         
@@ -45,13 +46,28 @@ def init_db():
             )
         """)
         
-        # Study items cache table (for summaries, flashcards, quizzes per session)
+        # Study items cache table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS study_cache (
                 session_id TEXT,
                 cache_key TEXT,
                 data TEXT,
                 PRIMARY KEY (session_id, cache_key),
+                FOREIGN KEY (session_id) REFERENCES sessions (session_id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Spaced Repetition (SM-2) Card Reviews table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS card_reviews (
+                session_id TEXT,
+                card_id TEXT,
+                ease_factor REAL DEFAULT 2.5,
+                interval_days INTEGER DEFAULT 0,
+                repetitions INTEGER DEFAULT 0,
+                next_review_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_reviewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (session_id, card_id),
                 FOREIGN KEY (session_id) REFERENCES sessions (session_id) ON DELETE CASCADE
             )
         """)
@@ -63,10 +79,7 @@ def init_db():
 
 
 def cleanup_expired_sessions(max_age_days: int = 30):
-    """
-    Evicts sessions created older than max_age_days to prevent database bloat.
-    Cascading deletes remove associated slides and cached study items automatically.
-    """
+    """Evicts sessions created older than max_age_days to prevent database bloat."""
     try:
         with get_db() as conn:
             cursor = conn.cursor()
@@ -80,12 +93,13 @@ def cleanup_expired_sessions(max_age_days: int = 30):
 
 
 def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
-    """Synchronous core save function."""
+    """Saves presentation content and slides scoped to a user session_id."""
     with get_db() as conn:
         cursor = conn.cursor()
         
         cursor.execute("DELETE FROM slides WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM study_cache WHERE session_id = ?", (session_id,))
+        cursor.execute("DELETE FROM card_reviews WHERE session_id = ?", (session_id,))
         
         cursor.execute("""
             INSERT OR REPLACE INTO sessions (session_id, filename, total_slides, full_digest, created_at)
@@ -115,7 +129,7 @@ def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
 
 
 def get_session_presentation(session_id: str) -> Optional[Dict[str, Any]]:
-    """Synchronous core retrieval function."""
+    """Retrieves session presentation data."""
     with get_db() as conn:
         cursor = conn.cursor()
         
@@ -149,7 +163,7 @@ def get_session_presentation(session_id: str) -> Optional[Dict[str, Any]]:
 
 
 def save_study_cache(session_id: str, cache_key: str, data: Any):
-    """Synchronous core cache function."""
+    """Caches generated study material (summary/flashcards/quiz) for a session."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -160,7 +174,7 @@ def save_study_cache(session_id: str, cache_key: str, data: Any):
 
 
 def get_study_cache(session_id: str, cache_key: str) -> Optional[Any]:
-    """Synchronous core cache retrieval function."""
+    """Retrieves cached study material for a session."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT data FROM study_cache WHERE session_id = ? AND cache_key = ?", (session_id, cache_key))
@@ -168,6 +182,139 @@ def get_study_cache(session_id: str, cache_key: str) -> Optional[Any]:
         if row and row["data"]:
             return json.loads(row["data"])
         return None
+
+
+# --- SM-2 Spaced Repetition Logic ---
+
+def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, Any]:
+    """
+    Implements standard SuperMemo-2 (SM-2) spaced repetition updates:
+    Rating maps to quality q: 'again' -> 0, 'hard' -> 3, 'good' -> 4, 'easy' -> 5.
+    Calculates interval_days, ease_factor, repetitions, and next_review_date.
+    """
+    rating_map = {
+        "again": 0,
+        "hard": 3,
+        "good": 4,
+        "easy": 5
+    }
+    q = rating_map.get(rating.lower(), 4)
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT ease_factor, interval_days, repetitions FROM card_reviews WHERE session_id = ? AND card_id = ?",
+            (session_id, card_id)
+        )
+        row = cursor.fetchone()
+
+        if row:
+            ease_factor = row["ease_factor"]
+            interval_days = row["interval_days"]
+            repetitions = row["repetitions"]
+        else:
+            ease_factor = 2.5
+            interval_days = 0
+            repetitions = 0
+
+        # Standard SM-2 interval update logic
+        if q < 3:
+            repetitions = 0
+            interval_days = 1
+        else:
+            if repetitions == 0:
+                interval_days = 1
+            elif repetitions == 1:
+                interval_days = 6
+            else:
+                interval_days = max(1, int(round(interval_days * ease_factor)))
+            repetitions += 1
+
+        # Ease factor update formula
+        ease_factor = ease_factor + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
+        if ease_factor < 1.3:
+            ease_factor = 1.3
+
+        now = datetime.utcnow()
+        next_review = now + timedelta(days=interval_days)
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        next_review_str = next_review.strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO card_reviews (
+                session_id, card_id, ease_factor, interval_days, repetitions, next_review_date, last_reviewed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            session_id,
+            card_id,
+            ease_factor,
+            interval_days,
+            repetitions,
+            next_review_str,
+            now_str
+        ))
+        conn.commit()
+
+        return {
+            "card_id": card_id,
+            "rating": rating,
+            "ease_factor": ease_factor,
+            "interval_days": interval_days,
+            "repetitions": repetitions,
+            "next_review_date": next_review_str
+        }
+
+
+def get_due_flashcards(session_id: str) -> Dict[str, Any]:
+    """
+    Returns flashcards from the session's cached deck where next_review_date <= now or unreviewed.
+    Cards are sorted so overdue cards come first.
+    """
+    all_cards = get_study_cache(session_id, "flashcards") or []
+    if not all_cards:
+        return {"due_flashcards": [], "total_due": 0, "total_cards": 0}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM card_reviews WHERE session_id = ?", (session_id,))
+        review_rows = cursor.fetchall()
+        
+        reviews_map = {r["card_id"]: dict(r) for r in review_rows}
+
+    now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    due_cards = []
+    for card in all_cards:
+        cid = card.get("card_id")
+        rev = reviews_map.get(cid)
+        
+        card_copy = dict(card)
+        if rev:
+            card_copy["ease_factor"] = rev["ease_factor"]
+            card_copy["interval_days"] = rev["interval_days"]
+            card_copy["repetitions"] = rev["repetitions"]
+            card_copy["next_review_date"] = rev["next_review_date"]
+            card_copy["last_reviewed_at"] = rev["last_reviewed_at"]
+            
+            # Due if next_review_date <= now
+            if rev["next_review_date"] <= now_str:
+                due_cards.append(card_copy)
+        else:
+            # Unreviewed card is due
+            card_copy["ease_factor"] = 2.5
+            card_copy["interval_days"] = 0
+            card_copy["repetitions"] = 0
+            card_copy["next_review_date"] = now_str
+            due_cards.append(card_copy)
+
+    # Sort due cards: unreviewed first, then by next_review_date ascending
+    due_cards.sort(key=lambda c: c.get("next_review_date", now_str))
+
+    return {
+        "due_flashcards": due_cards,
+        "total_due": len(due_cards),
+        "total_cards": len(all_cards)
+    }
 
 
 # Threadpool Async Wrappers to prevent event-loop blocking under load
@@ -182,3 +329,9 @@ async def async_save_study_cache(session_id: str, cache_key: str, data: Any):
 
 async def async_get_study_cache(session_id: str, cache_key: str) -> Optional[Any]:
     return await run_in_threadpool(get_study_cache, session_id, cache_key)
+
+async def async_record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, Any]:
+    return await run_in_threadpool(record_card_review, session_id, card_id, rating)
+
+async def async_get_due_flashcards(session_id: str) -> Dict[str, Any]:
+    return await run_in_threadpool(get_due_flashcards, session_id)
