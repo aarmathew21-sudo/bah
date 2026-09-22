@@ -18,7 +18,6 @@ def main():
 
     print("--- 1. Testing Hard File Validation Functions (PPT & PDF) ---")
     
-    # Generate sample PPT & PDF
     sample_ppt_filename = "sample_study_presentation.pptx"
     create_sample_presentation(sample_ppt_filename)
     with open(sample_ppt_filename, "rb") as f:
@@ -45,14 +44,23 @@ def main():
     print("\n--- 2. Testing FastAPI REST Endpoints via TestClient ---")
 
     with TestClient(app) as client:
-        # A) Test CORS Preflight Options
+        # A) Test CORS Preflight Options for trusted origin
         cors_resp = client.options(
             "/api/upload",
-            headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST"}
+            headers={"Origin": "http://localhost:8000", "Access-Control-Request-Method": "POST"}
         )
         assert cors_resp.status_code == 200
-        assert "access-control-allow-origin" in cors_resp.headers
-        print("CORS middleware preflight check passed.")
+        assert cors_resp.headers.get("access-control-allow-origin") == "http://localhost:8000"
+        assert cors_resp.headers.get("access-control-allow-credentials") == "true"
+        print("CORS preflight check for trusted origin passed.")
+
+        # Test CORS preflight for untrusted origin (should NOT echo untrusted origin)
+        cors_bad = client.options(
+            "/api/upload",
+            headers={"Origin": "http://malicious-site.com", "Access-Control-Request-Method": "POST"}
+        )
+        assert cors_bad.headers.get("access-control-allow-origin") != "http://malicious-site.com"
+        print("CORS security check: untrusted origins correctly blocked.")
 
         # B) Test PDF upload endpoint
         pdf_resp = client.post(
@@ -80,10 +88,8 @@ def main():
         # E) Test Rate Limiter Throttling
         print("Testing rate limiter protection on /api/study/*...")
         with TestClient(app) as rate_client:
-            # First upload file for rate_client session
             rate_client.post("/api/upload", files={"file": ("presentation.pptx", valid_ppt_bytes, "application/vnd.openxmlformats-officedocument.presentationml.presentation")})
             
-            # Send requests up to rate limit
             rate_limit_hit = False
             for i in range(35):
                 r = rate_client.post("/api/study/summary", json={})
@@ -93,7 +99,7 @@ def main():
             assert rate_limit_hit, "Expected rate limit 429 Too Many Requests after 30 calls!"
             print("Rate limiter throttling (429 Too Many Requests) verified successfully.")
 
-    print("\n[SUCCESS] ALL PPT, PDF, CORS, AND RATE LIMITER TESTS PASSED SUCCESSFULLY!")
+    print("\n[SUCCESS] ALL PPT, PDF, CORS SECURITY, AND RATE LIMITER TESTS PASSED SUCCESSFULLY!")
 
 if __name__ == "__main__":
     main()

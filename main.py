@@ -33,10 +33,14 @@ app = FastAPI(
     description="Multi-user FastAPI application for PowerPoint (.pptx) & PDF (.pdf) parsing and ChatGPT AI Tutoring."
 )
 
-# 1. Add CORS Middleware (enables multi-origin deployment if frontend is separated)
+# Configure trusted origins for CORS (defaulting to app's own localhost origins)
+# Prevents wildcard credential reflection security vulnerabilities
+raw_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000")
+allowed_origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,7 +81,7 @@ def rate_limit_study_api(session_id: str = Depends(get_session_id)):
 @app.on_event("startup")
 def startup_event():
     init_db()
-    logger.info("Database initialized with threadpool async wrappers and session cleanup.")
+    logger.info(f"Database initialized with threadpool async wrappers and session cleanup. Trusted CORS origins: {allowed_origins}")
 
 
 class ChatRequest(BaseModel):
