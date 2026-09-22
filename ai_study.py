@@ -1,0 +1,303 @@
+import os
+import json
+import re
+from typing import List, Dict, Any, Optional
+
+try:
+    from google import genai
+    from google.genai import types
+    HAS_GENAI = True
+except ImportError:
+    HAS_GENAI = False
+
+
+def _get_genai_client(api_key: Optional[str] = None):
+    key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not key or not HAS_GENAI:
+        return None
+    try:
+        return genai.Client(api_key=key)
+    except Exception:
+        return None
+
+
+def generate_study_summary(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> Dict[str, Any]:
+    """Generates structured overview and key study topics formatted like a personal tutor guide."""
+    digest = ppt_data.get("full_digest", "")
+    slides = ppt_data.get("slides", [])
+    
+    client = _get_genai_client(api_key)
+    if client:
+        prompt = f"""You are an enthusiastic ChatGPT AI Teacher helping a student master their presentation material.
+
+Presentation Digest (including hidden speaker notes):
+{digest}
+
+Task: Create an easy-to-understand, engaging Study Guide.
+Return a valid JSON object with the following schema:
+{{
+  "title": "Overall Presentation Topic",
+  "summary": "2-3 sentence engaging overview written like a friendly teacher introducing the topic",
+  "key_concepts": [
+    {{
+      "concept": "Concept Name",
+      "explanation": "Simple, clear breakdown with an analogy or real-world example",
+      "slides_referenced": "Slide numbers e.g. Slide 1, 3"
+    }}
+  ],
+  "speaker_note_highlights": [
+    "Important presenter insights extracted from speaker notes"
+  ],
+  "study_tips": [
+    "Actionable tip for mastering this material"
+  ]
+}}
+Respond ONLY with the JSON block.
+"""
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            txt = response.text.strip()
+            txt = re.sub(r'^```json\s*', '', txt)
+            txt = re.sub(r'\s*```$', '', txt)
+            return json.loads(txt)
+        except Exception as e:
+            print(f"Gemini API error in summary generation: {e}")
+
+    # Fallback smart extraction
+    concepts = []
+    notes_highlights = []
+    for s in slides:
+        num = s["slide_number"]
+        t = s["title"]
+        texts = s.get("text_content", [])
+        notes = s.get("speaker_notes", "")
+
+        if texts:
+            concepts.append({
+                "concept": t,
+                "explanation": f"Key focus: {' '.join(texts[:2]) if len(texts) > 0 else 'See slide content.'}",
+                "slides_referenced": f"Slide {num}"
+            })
+        if notes:
+            notes_highlights.append(f"Slide {num} ({t}): {notes}")
+
+    return {
+        "title": slides[0]["title"] if slides else "Presentation Study Guide",
+        "summary": f"Welcome! I am your AI Teacher. Here is your study roadmap for these {len(slides)} slides and speaker notes.",
+        "key_concepts": concepts[:8],
+        "speaker_note_highlights": notes_highlights[:5],
+        "study_tips": [
+            "💡 Tip: Review speaker notes closely - teachers often put test questions there!",
+            "🧠 Active Recall: Use the Flashcards tab to test yourself after reading each slide."
+        ]
+    }
+
+
+def generate_flashcards(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> List[Dict[str, str]]:
+    """Generates active recall study flashcards."""
+    digest = ppt_data.get("full_digest", "")
+    slides = ppt_data.get("slides", [])
+
+    client = _get_genai_client(api_key)
+    if client:
+        prompt = f"""You are a master educator. Create 8 to 15 active-recall flashcards based on these slides and presenter notes.
+
+Presentation Data:
+{digest}
+
+Return a valid JSON array of objects with schema:
+[
+  {{
+    "id": 1,
+    "front": "Question or term requiring active recall",
+    "back": "Clear, concise answer with key takeaway",
+    "category": "Slide reference or topic"
+  }}
+]
+Respond ONLY with the JSON array.
+"""
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            txt = response.text.strip()
+            txt = re.sub(r'^```json\s*', '', txt)
+            txt = re.sub(r'\s*```$', '', txt)
+            cards = json.loads(txt)
+            if isinstance(cards, list) and len(cards) > 0:
+                return cards
+        except Exception as e:
+            print(f"Gemini API error in flashcard generation: {e}")
+
+    # Fallback cards
+    flashcards = []
+    card_id = 1
+    for s in slides:
+        num = s["slide_number"]
+        title = s["title"]
+        notes = s.get("speaker_notes", "")
+        text_content = s.get("text_content", [])
+
+        if text_content:
+            flashcards.append({
+                "id": card_id,
+                "front": f"What are the main concepts covered in: '{title}'?",
+                "back": "\n• ".join([""] + text_content),
+                "category": f"Slide {num}"
+            })
+            card_id += 1
+
+        if notes:
+            flashcards.append({
+                "id": card_id,
+                "front": f"What hidden presenter note is under '{title}'?",
+                "back": notes,
+                "category": f"Slide {num} Notes"
+            })
+            card_id += 1
+
+    return flashcards
+
+
+def generate_quiz(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Generates multiple-choice quiz questions with teacher explanations."""
+    digest = ppt_data.get("full_digest", "")
+    slides = ppt_data.get("slides", [])
+
+    client = _get_genai_client(api_key)
+    if client:
+        prompt = f"""Generate a 5-10 question multiple-choice quiz based on these slides and presenter notes.
+
+Presentation Data:
+{digest}
+
+Return a valid JSON array of question objects:
+[
+  {{
+    "id": 1,
+    "question": "Question text...",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "answer_index": 0,
+    "explanation": "Friendly teacher explanation explaining why this answer is correct."
+  }}
+]
+Respond ONLY with the JSON array.
+"""
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            txt = response.text.strip()
+            txt = re.sub(r'^```json\s*', '', txt)
+            txt = re.sub(r'\s*```$', '', txt)
+            quiz = json.loads(txt)
+            if isinstance(quiz, list) and len(quiz) > 0:
+                return quiz
+        except Exception as e:
+            print(f"Gemini API error in quiz generation: {e}")
+
+    # Fallback quiz
+    quiz = []
+    for idx, s in enumerate(slides, start=1):
+        if s.get("text_content"):
+            main_pt = s["text_content"][0]
+            quiz.append({
+                "id": idx,
+                "question": f"Regarding Slide {s['slide_number']} ({s['title']}), which statement is correct?",
+                "options": [
+                    main_pt,
+                    "This concept is not mentioned in the presentation.",
+                    "The presenter noted that this topic will be skipped.",
+                    "None of the above."
+                ],
+                "answer_index": 0,
+                "explanation": f"👨‍🏫 Teacher Note: Slide {s['slide_number']} highlights: {main_pt}"
+            })
+    return quiz[:8]
+
+
+def answer_study_chat(
+    ppt_data: Dict[str, Any],
+    chat_history: List[Dict[str, str]],
+    user_message: str,
+    teacher_mode: str = "tutor",
+    api_key: Optional[str] = None
+) -> str:
+    """
+    Answers student questions adopting a ChatGPT Teacher persona.
+    Teacher modes:
+    - 'tutor': Encouraging, clear, interactive teacher.
+    - 'eli5': Explain like I'm 5 with simple analogies.
+    - 'quiz_me': Teacher poses Socratic questions to test the student.
+    - 'notes_deepdive': Focuses on hidden presenter speaker notes.
+    """
+    digest = ppt_data.get("full_digest", "")
+    client = _get_genai_client(api_key)
+
+    mode_instructions = {
+        "tutor": "You are a warm, highly effective ChatGPT AI Teacher. Break concepts down step-by-step, use formatting, and ask a quick follow-up question to ensure understanding.",
+        "eli5": "You are a friendly teacher explaining complex concepts to a 5-year-old. Use fun real-world analogies, simple language, and short paragraphs.",
+        "quiz_me": "You are an interactive AI examiner. Ask the student a thought-provoking practice question based on the presentation text and speaker notes, then give feedback on their response.",
+        "notes_deepdive": "You are a specialist focusing on the presenter's hidden speaker notes. Explain what the presenter intended to convey beyond the bullet points on the slides."
+    }
+
+    selected_instruction = mode_instructions.get(teacher_mode, mode_instructions["tutor"])
+
+    if client:
+        system_instruction = f"""{selected_instruction}
+
+Presentation Material (Slides & Speaker Notes):
+{digest}
+
+Behavior Rules:
+1. Always be patient, encouraging, and easy to follow.
+2. Highlight speaker notes explicitly when relevant using 📌 **Speaker Note Insight**.
+3. Cite slide numbers e.g. [Slide 2].
+4. End your message with an engaging check for understanding.
+"""
+        formatted_history = ""
+        for msg in chat_history[-6:]:
+            role = "Student" if msg.get("role") == "user" else "AI Teacher"
+            formatted_history += f"{role}: {msg.get('content')}\n"
+
+        prompt = f"{system_instruction}\n\nRecent Conversation:\n{formatted_history}\nStudent: {user_message}\nAI Teacher:"
+
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            return response.text.strip()
+        except Exception as e:
+            return f"Error connecting to AI Teacher: {str(e)}"
+
+    # Smart local fallback answer formatted like an AI teacher
+    user_lower = user_message.lower()
+    matches = []
+    for s in ppt_data.get("slides", []):
+        combined = s.get("raw_text", "")
+        if any(w in combined.lower() for w in user_lower.split() if len(w) > 3):
+            matches.append(s)
+
+    if matches:
+        target = matches[0]
+        res = f"👨‍🏫 **AI Teacher Explanation for Slide {target['slide_number']}: {target['title']}**\n\n"
+        if target.get("text_content"):
+            res += "Here are the core takeaways in simple terms:\n"
+            for pt in target["text_content"]:
+                res += f"• **{pt}**\n"
+            res += "\n"
+        
+        if target.get("speaker_notes"):
+            res += f"📌 **Hidden Presenter Note Insight**:\n\"{target['speaker_notes']}\"\n\n"
+
+        res += "💡 *Teacher Check*: Does this explanation make sense, or would you like me to clarify a specific point?"
+        res += "\n\n*(Tip: Enter a Gemini API Key in settings to unlock full conversational ChatGPT Teacher AI!)*"
+        return res
+
+    return "👨‍🏫 **AI Teacher**: I couldn't find a direct reference to that in the slides or speaker notes. Try asking about a specific slide topic, or ask me: *'Teach me Slide 1'*!\n*(Add a Gemini API Key for unrestricted conversational AI tutoring!)*"
