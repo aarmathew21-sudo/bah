@@ -254,6 +254,109 @@ Respond ONLY with the JSON array.
     return quiz[:8]
 
 
+def generate_quizmaster_exam(
+    ppt_data: Dict[str, Any],
+    difficulty: str = "Medium",
+    topic: Optional[str] = None,
+    question_count: int = 5,
+    api_key: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Generates a customized interactive exam for Quiz Master Hub with specific difficulty, question count, and optional topic focus."""
+    digest = ppt_data.get("full_digest", "")
+    slides = ppt_data.get("slides", [])
+
+    topic_context = f"\nFocus heavily on topic/keyword: '{topic}'" if topic else ""
+    difficulty_instructions = {
+        "Easy": "Questions should test direct factual recall, definitions, and basic slide bullet points.",
+        "Medium": "Questions should test conceptual understanding, connections between topics, and presenter note insights.",
+        "Hard": "Questions should feature scenario-based application, critical analysis, multi-step reasoning, and edge-case evaluation."
+    }
+    diff_desc = difficulty_instructions.get(difficulty, difficulty_instructions["Medium"])
+
+    client = _get_genai_client(api_key)
+    if client:
+        prompt = f"""You are a university exam designer creating a {difficulty} difficulty exam.
+Total Questions: {question_count}
+Difficulty Guidelines ({difficulty}): {diff_desc}{topic_context}
+
+Presentation Material:
+{digest}
+
+Return a valid JSON array of question objects:
+[
+  {{
+    "id": 1,
+    "question": "Clear, challenging question stem...",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "answer_index": 0,
+    "explanation": "Comprehensive solution explanation detailing why the correct answer is right and others are incorrect.",
+    "difficulty": "{difficulty}",
+    "topic": "{topic or 'General Presentation'}"
+  }}
+]
+Respond ONLY with the JSON array.
+"""
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            txt = response.text.strip()
+            txt = re.sub(r'^```json\s*', '', txt)
+            txt = re.sub(r'\s*```$', '', txt)
+            exam_q = json.loads(txt)
+            if isinstance(exam_q, list) and len(exam_q) > 0:
+                return exam_q[:question_count]
+        except Exception as e:
+            logger.error(f"Gemini API error in Quiz Master exam generation: {str(e)}")
+
+    # Smart local fallback exam generation
+    exam_q = []
+    available_slides = [s for s in slides if s.get("text_content")]
+    if not available_slides:
+        available_slides = slides
+
+    filtered_slides = available_slides
+    if topic:
+        topic_lower = topic.lower()
+        matched = [s for s in available_slides if topic_lower in (s.get("title", "") + s.get("raw_text", "")).lower()]
+        if matched:
+            filtered_slides = matched
+
+    for idx in range(1, question_count + 1):
+        s = filtered_slides[(idx - 1) % len(filtered_slides)] if filtered_slides else {"slide_number": idx, "title": f"Topic {idx}", "text_content": ["Core Concept"], "speaker_notes": ""}
+        main_pt = s.get("text_content", ["Key Concept"])[0] if s.get("text_content") else "Core slide objective"
+        notes = s.get("speaker_notes", "")
+        
+        if difficulty == "Hard":
+            q_text = f"[Hard Scenario - Slide {s.get('slide_number', idx)}] Applying the concepts from '{s.get('title')}', which solution best addresses a failure case in implementation?"
+            exp = f"🔴 Hard Level Analysis: Slide {s.get('slide_number', idx)} highlights: {main_pt}. {f'Presenter note: {notes}' if notes else ''}"
+        elif difficulty == "Easy":
+            q_text = f"[Easy Recall - Slide {s.get('slide_number', idx)}] According to '{s.get('title')}', what is the primary takeaway stated?"
+            exp = f"🟢 Easy Level Recall: Slide {s.get('slide_number', idx)} explicitly mentions: {main_pt}."
+        else:
+            q_text = f"[Medium Concept - Slide {s.get('slide_number', idx)}] Regarding '{s.get('title')}', which option correctly explains the mechanism?"
+            exp = f"🟡 Medium Level Reasoning: Slide {s.get('slide_number', idx)} details: {main_pt}."
+
+        exam_q.append({
+            "id": idx,
+            "question": q_text,
+            "options": [
+                main_pt,
+                "This concept is explicitly refuted in the speaker notes.",
+                "It applies only in deprecated legacy hardware environments.",
+                "None of the above."
+            ],
+            "answer_index": 0,
+            "explanation": exp,
+            "difficulty": difficulty,
+            "topic": topic or s.get("title", f"Slide {s.get('slide_number', idx)}")
+        })
+
+    return exam_q[:question_count]
+
+
+
 def answer_study_chat(
     ppt_data: Dict[str, Any],
     chat_history: List[Dict[str, str]],

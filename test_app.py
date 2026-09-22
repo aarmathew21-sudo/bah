@@ -94,7 +94,44 @@ def main():
         assert card_id not in due_card_ids
         print("SM-2 due queue test passed: card correctly dropped out of due queue for future review.")
 
-    print("\n[SUCCESS] ALL SM-2 SPACED REPETITION, ENDPOINTS, AND VALIDATION TESTS PASSED!")
+        # C) Test Quiz Master Endpoints
+        # Generate exam
+        gen_resp = client.post("/api/quizmaster/generate", json={
+            "difficulty": "Hard",
+            "question_count": 5,
+            "topic": "Machine Learning"
+        })
+        assert gen_resp.status_code == 200
+        gen_data = gen_resp.json()
+        assert gen_data["difficulty"] == "Hard"
+        assert len(gen_data["questions"]) == 5
+        print(f"Quiz Master generate exam passed. Title: '{gen_data['exam_title']}' with 5 questions.")
+
+        # Submit exam results
+        sub_resp = client.post("/api/quizmaster/submit", json={
+            "exam_title": gen_data["exam_title"],
+            "score": 4,
+            "total_questions": 5,
+            "time_spent_seconds": 120,
+            "details": [
+                {"question": "Q1", "user_option": "Opt A", "correct_option": "Opt A", "is_correct": True, "explanation": "Correct"}
+            ]
+        })
+        assert sub_resp.status_code == 200
+        sub_data = sub_resp.json()["result"]
+        assert sub_data["percentage"] == 80.0
+        assert sub_data["score"] == 4
+        print(f"Quiz Master submit exam passed. Saved score ID {sub_data['id']} with {sub_data['percentage']}%.")
+
+        # Fetch exam history
+        hist_resp = client.get("/api/quizmaster/history")
+        assert hist_resp.status_code == 200
+        hist_data = hist_resp.json()["history"]
+        assert len(hist_data) >= 1
+        assert hist_data[0]["score"] == 4
+        print(f"Quiz Master fetch history passed. Total attempts recorded: {len(hist_data)}.")
+
+    print("\n[SUCCESS] ALL SM-2 SPACED REPETITION, QUIZ MASTER, REST ENDPOINTS, AND VALIDATION TESTS PASSED!")
 
 if __name__ == "__main__":
     main()

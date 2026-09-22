@@ -799,3 +799,385 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
 }
+
+// --- QUIZ MASTER HUB INTERACTIVE EXAM ENGINE ---
+let quizMasterState = {
+    examTitle: '',
+    questions: [],
+    currentIndex: 0,
+    userAnswers: {}, // question index -> option index
+    flagged: {}, // question index -> boolean
+    startTime: null,
+    timerInterval: null,
+    timeLimitSeconds: 300,
+    remainingSeconds: 300
+};
+
+async function startQuizMasterExam() {
+    hideError();
+    const diff = document.getElementById('qmDifficulty').value;
+    const count = parseInt(document.getElementById('qmCount').value, 10);
+    const topic = document.getElementById('qmTopic').value.trim();
+
+    const setupCard = document.getElementById('qmSetupCard');
+    const examCard = document.getElementById('qmExamCard');
+    const scorecardCard = document.getElementById('qmScorecardCard');
+    const historyCard = document.getElementById('qmHistoryCard');
+
+    try {
+        const res = await fetch('/api/quizmaster/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                difficulty: diff,
+                question_count: count,
+                topic: topic || null,
+                api_key: getApiKey()
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to generate exam');
+        }
+
+        const data = await res.json();
+        
+        quizMasterState = {
+            examTitle: data.exam_title,
+            questions: data.questions || [],
+            currentIndex: 0,
+            userAnswers: {},
+            flagged: {},
+            startTime: Date.now(),
+            timerInterval: null,
+            timeLimitSeconds: data.time_limit_seconds || count * 60,
+            remainingSeconds: data.time_limit_seconds || count * 60
+        };
+
+        if (quizMasterState.questions.length === 0) {
+            throw new Error('No exam questions could be generated from document.');
+        }
+
+        document.getElementById('qmExamTitle').textContent = data.exam_title;
+        setupCard.classList.add('hidden');
+        scorecardCard.classList.add('hidden');
+        historyCard.classList.add('hidden');
+        examCard.classList.remove('hidden');
+
+        startQuizMasterTimer();
+        renderQuizMasterNavPills();
+        renderQuizMasterCurrentQuestion();
+
+    } catch (err) {
+        showError('Quiz Master Error: ' + err.message);
+    }
+}
+
+function startQuizMasterTimer() {
+    if (quizMasterState.timerInterval) {
+        clearInterval(quizMasterState.timerInterval);
+    }
+
+    const timerDisplay = document.getElementById('qmTimerDisplay');
+    const timerWrapper = document.getElementById('qmTimerWrapper');
+
+    updateTimerUI();
+
+    quizMasterState.timerInterval = setInterval(() => {
+        quizMasterState.remainingSeconds--;
+        updateTimerUI();
+
+        if (quizMasterState.remainingSeconds <= 0) {
+            clearInterval(quizMasterState.timerInterval);
+            alert('⏱️ Time is up! Submitting your exam now.');
+            submitQuizMasterExam();
+        }
+    }, 1000);
+
+    function updateTimerUI() {
+        const mins = Math.floor(Math.max(0, quizMasterState.remainingSeconds) / 60);
+        const secs = Math.max(0, quizMasterState.remainingSeconds) % 60;
+        const fmt = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        timerDisplay.textContent = fmt;
+
+        if (quizMasterState.remainingSeconds <= 60) {
+            timerWrapper.classList.add('warning');
+        } else {
+            timerWrapper.classList.remove('warning');
+        }
+    }
+}
+
+function renderQuizMasterNavPills() {
+    const container = document.getElementById('qmNavPills');
+    container.innerHTML = '';
+
+    quizMasterState.questions.forEach((q, idx) => {
+        const pill = document.createElement('div');
+        let classes = 'qm-pill';
+        if (idx === quizMasterState.currentIndex) classes += ' active';
+        if (quizMasterState.userAnswers.hasOwnProperty(idx)) classes += ' answered';
+        if (quizMasterState.flagged[idx]) classes += ' flagged';
+
+        pill.className = classes;
+        pill.textContent = idx + 1;
+        pill.onclick = () => {
+            quizMasterState.currentIndex = idx;
+            renderQuizMasterNavPills();
+            renderQuizMasterCurrentQuestion();
+        };
+        container.appendChild(pill);
+    });
+}
+
+function renderQuizMasterCurrentQuestion() {
+    const idx = quizMasterState.currentIndex;
+    const q = quizMasterState.questions[idx];
+    const total = quizMasterState.questions.length;
+
+    document.getElementById('qmQuestionProgress').textContent = `Question ${idx + 1} of ${total}`;
+
+    const container = document.getElementById('qmActiveQuestionContainer');
+    let optionsHtml = '';
+
+    q.options.forEach((opt, optIdx) => {
+        const isSelected = quizMasterState.userAnswers[idx] === optIdx;
+        const selectedClass = isSelected ? 'correct' : '';
+        optionsHtml += `
+            <button class="quiz-option-btn ${selectedClass}" onclick="selectQuizMasterOption(${optIdx})">
+                ${String.fromCharCode(65 + optIdx)}. ${escapeHtml(opt)}
+            </button>
+        `;
+    });
+
+    const diffBadge = q.difficulty ? `<span class="slide-num-badge" style="background: var(--secondary); margin-right: 8px;">${q.difficulty}</span>` : '';
+    const topicBadge = q.topic ? `<span class="slide-num-badge" style="background: var(--text-muted);">${escapeHtml(q.topic)}</span>` : '';
+
+    container.innerHTML = `
+        <div style="margin-bottom: 12px;">${diffBadge}${topicBadge}</div>
+        <div class="quiz-q-title">Q${idx + 1}. ${escapeHtml(q.question)}</div>
+        <div class="quiz-options">${optionsHtml}</div>
+    `;
+
+    // Footer buttons navigation state
+    document.getElementById('qmPrevBtn').disabled = (idx === 0);
+    const flagBtn = document.getElementById('qmFlagBtn');
+    flagBtn.innerHTML = quizMasterState.flagged[idx] ? `<i class="fa-solid fa-bookmark"></i> Unflag` : `<i class="fa-regular fa-bookmark"></i> Flag Question`;
+
+    const nextBtn = document.getElementById('qmNextBtn');
+    const submitBtn = document.getElementById('qmSubmitBtn');
+
+    if (idx === total - 1) {
+        nextBtn.classList.add('hidden');
+        submitBtn.classList.remove('hidden');
+    } else {
+        nextBtn.classList.remove('hidden');
+        submitBtn.classList.add('hidden');
+    }
+}
+
+function selectQuizMasterOption(optIdx) {
+    const idx = quizMasterState.currentIndex;
+    quizMasterState.userAnswers[idx] = optIdx;
+    renderQuizMasterNavPills();
+    renderQuizMasterCurrentQuestion();
+}
+
+function toggleFlagQuizMasterQuestion() {
+    const idx = quizMasterState.currentIndex;
+    quizMasterState.flagged[idx] = !quizMasterState.flagged[idx];
+    renderQuizMasterNavPills();
+    renderQuizMasterCurrentQuestion();
+}
+
+function prevQuizMasterQuestion() {
+    if (quizMasterState.currentIndex > 0) {
+        quizMasterState.currentIndex--;
+        renderQuizMasterNavPills();
+        renderQuizMasterCurrentQuestion();
+    }
+}
+
+function nextQuizMasterQuestion() {
+    if (quizMasterState.currentIndex < quizMasterState.questions.length - 1) {
+        quizMasterState.currentIndex++;
+        renderQuizMasterNavPills();
+        renderQuizMasterCurrentQuestion();
+    }
+}
+
+async function submitQuizMasterExam() {
+    if (quizMasterState.timerInterval) {
+        clearInterval(quizMasterState.timerInterval);
+    }
+
+    const timeSpent = Math.round((Date.now() - quizMasterState.startTime) / 1000);
+    let correctCount = 0;
+    const details = [];
+
+    quizMasterState.questions.forEach((q, idx) => {
+        const userOpt = quizMasterState.userAnswers[idx];
+        const isCorrect = (userOpt === q.answer_index);
+        if (isCorrect) correctCount++;
+
+        details.push({
+            question_id: q.id,
+            question: q.question,
+            user_option: userOpt !== undefined ? q.options[userOpt] : "No answer selected",
+            correct_option: q.options[q.answer_index],
+            is_correct: isCorrect,
+            explanation: q.explanation
+        });
+    });
+
+    const total = quizMasterState.questions.length;
+    const percent = Math.round((correctCount / total) * 100);
+
+    try {
+        const res = await fetch('/api/quizmaster/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                exam_title: quizMasterState.examTitle,
+                score: correctCount,
+                total_questions: total,
+                time_spent_seconds: timeSpent,
+                details: details
+            })
+        });
+
+        if (!res.ok) {
+            console.error('Quiz Master submit error');
+        }
+    } catch (e) {
+        console.error('Submit API exception:', e.message);
+    }
+
+    // Render Scorecard
+    document.getElementById('qmExamCard').classList.add('hidden');
+    document.getElementById('qmScorecardCard').classList.remove('hidden');
+
+    const gaugePath = document.getElementById('qmGaugePath');
+    const percentText = document.getElementById('qmScorePercentText');
+    const gradeHeading = document.getElementById('qmScoreGrade');
+    const summaryText = document.getElementById('qmScoreSummaryText');
+
+    gaugePath.setAttribute('stroke-dasharray', `${percent}, 100`);
+    percentText.textContent = `${percent}%`;
+
+    let grade = 'Mastery Achieved! 🏆';
+    if (percent < 50) grade = 'Needs Revision 📚';
+    else if (percent < 80) grade = 'Good Progress! 👍';
+    gradeHeading.textContent = grade;
+
+    const mins = Math.floor(timeSpent / 60);
+    const secs = timeSpent % 60;
+    summaryText.textContent = `You scored ${correctCount} out of ${total} questions correctly in ${mins}m ${secs}s.`;
+
+    // Render Review Breakdown
+    const reviewContainer = document.getElementById('qmReviewContainer');
+    let reviewHtml = '';
+
+    details.forEach((d, idx) => {
+        const badge = d.is_correct ? `<span class="badge badge-active">✔ Correct</span>` : `<span class="badge badge-fallback" style="background:#fee2e2; color:#b91c1c;">✘ Incorrect</span>`;
+        reviewHtml += `
+            <div class="quiz-question-card">
+                <div class="flex-between" style="margin-bottom: 8px;">
+                    <div class="quiz-q-title" style="margin: 0;">Q${idx + 1}. ${escapeHtml(d.question)}</div>
+                    ${badge}
+                </div>
+                <p style="font-size: 13px; margin-bottom: 4px;"><strong>Your Answer:</strong> <span style="color: ${d.is_correct ? 'var(--success)' : 'var(--danger)'};">${escapeHtml(d.user_option)}</span></p>
+                ${!d.is_correct ? `<p style="font-size: 13px; margin-bottom: 4px;"><strong>Correct Answer:</strong> <span style="color: var(--success);">${escapeHtml(d.correct_option)}</span></p>` : ''}
+                <div class="quiz-explanation" style="margin-top: 8px;">
+                    <strong>Teacher Explanation:</strong> ${escapeHtml(d.explanation)}
+                </div>
+            </div>
+        `;
+    });
+
+    reviewContainer.innerHTML = reviewHtml;
+}
+
+function resetQuizMasterSetup() {
+    if (quizMasterState.timerInterval) {
+        clearInterval(quizMasterState.timerInterval);
+    }
+    document.getElementById('qmExamCard').classList.add('hidden');
+    document.getElementById('qmScorecardCard').classList.add('hidden');
+    document.getElementById('qmHistoryCard').classList.add('hidden');
+    document.getElementById('qmSetupCard').classList.remove('hidden');
+}
+
+async function loadQuizMasterHistory() {
+    hideError();
+    const setupCard = document.getElementById('qmSetupCard');
+    const examCard = document.getElementById('qmExamCard');
+    const scorecardCard = document.getElementById('qmScorecardCard');
+    const historyCard = document.getElementById('qmHistoryCard');
+    const container = document.getElementById('qmHistoryTableContainer');
+
+    setupCard.classList.add('hidden');
+    examCard.classList.add('hidden');
+    scorecardCard.classList.add('hidden');
+    historyCard.classList.remove('hidden');
+
+    container.innerHTML = `<div class="loading-overlay"><div class="spinner"></div><p>Loading score history...</p></div>`;
+
+    try {
+        const res = await fetch('/api/quizmaster/history');
+        if (!res.ok) throw new Error('Failed to fetch score history');
+
+        const data = await res.json();
+        const history = data.history || [];
+
+        if (history.length === 0) {
+            container.innerHTML = `<p class="placeholder-state">No past exam attempts recorded yet for this document session.</p>`;
+            return;
+        }
+
+        let html = `
+            <table class="qm-table">
+                <thead>
+                    <tr>
+                        <th>Date & Time</th>
+                        <th>Exam Title</th>
+                        <th>Score</th>
+                        <th>Percentage</th>
+                        <th>Time Spent</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        history.forEach(h => {
+            const mins = Math.floor(h.time_spent_seconds / 60);
+            const secs = h.time_spent_seconds % 60;
+            const timeFmt = `${mins}m ${secs}s`;
+            const badgeClass = h.percentage >= 80 ? 'badge-active' : (h.percentage >= 50 ? 'badge-fallback' : 'badge-fallback');
+            
+            html += `
+                <tr>
+                    <td>${escapeHtml(h.created_at)}</td>
+                    <td><strong>${escapeHtml(h.exam_title)}</strong></td>
+                    <td>${h.score} / ${h.total_questions}</td>
+                    <td><span class="badge ${badgeClass}">${h.percentage}%</span></td>
+                    <td>${timeFmt}</td>
+                </tr>
+            `;
+        });
+
+        html += `</tbody></table>`;
+        container.innerHTML = html;
+
+    } catch (err) {
+        showError('History error: ' + err.message);
+        container.innerHTML = `<p style="color: var(--danger);">${escapeHtml(err.message)}</p>`;
+    }
+}
+
+function closeQuizMasterHistory() {
+    document.getElementById('qmHistoryCard').classList.add('hidden');
+    document.getElementById('qmSetupCard').classList.remove('hidden');
+}
+

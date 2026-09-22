@@ -3,11 +3,13 @@ import zipfile
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pdf_parser import validate_pdf_file, extract_pdf_content
+from legacy_ppt_parser import validate_legacy_ppt_file, extract_legacy_ppt_content
 
 
-def validate_upload_file(file_bytes: bytes, filename: str = "", max_size_mb: int = 50):
+def validate_upload_file(file_bytes: bytes, filename: str = "", max_size_mb: int = 50) -> str:
     """
-    Validates file size and inspects format headers for both PowerPoint (.pptx) and PDF (.pdf) files.
+    Validates file size and inspects format headers for PowerPoint (.pptx / .ppt) and PDF (.pdf) files.
+    Returns format string: 'pptx', 'ppt_legacy', or 'pdf'.
     """
     max_bytes = max_size_mb * 1024 * 1024
     if len(file_bytes) > max_bytes:
@@ -17,14 +19,23 @@ def validate_upload_file(file_bytes: bytes, filename: str = "", max_size_mb: int
         raise ValueError("File is too small to be a valid document.")
 
     filename_lower = filename.lower()
+    
+    # 1. PDF Check
     if filename_lower.endswith(".pdf") or file_bytes.startswith(b"%PDF"):
         validate_pdf_file(file_bytes, filename=filename, max_size_mb=max_size_mb)
         return "pdf"
-    elif filename_lower.endswith((".pptx", ".ppt")) or file_bytes.startswith(b"PK\x03\x04"):
+
+    # 2. Modern PPTX (OpenXML ZIP) Check
+    if filename_lower.endswith(".pptx") or file_bytes.startswith(b"PK\x03\x04"):
         validate_pptx_file(file_bytes, filename=filename, max_size_mb=max_size_mb)
         return "pptx"
-    else:
-        raise ValueError("Unsupported file format. Please upload a PowerPoint (.pptx) or PDF (.pdf) file.")
+
+    # 3. Legacy PPT (PowerPoint 97-2003 OLE Compound Binary) Check
+    if filename_lower.endswith(".ppt") or file_bytes.startswith(b"\xd0\xcf\x11\xe0"):
+        validate_legacy_ppt_file(file_bytes, filename=filename, max_size_mb=max_size_mb)
+        return "ppt_legacy"
+
+    raise ValueError("Unsupported file format. Please upload a PowerPoint (.pptx / .ppt) or PDF (.pdf) file.")
 
 
 def validate_pptx_file(file_bytes: bytes, filename: str = "", max_size_mb: int = 50):
@@ -70,11 +81,9 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
             "raw_text": ""
         }
 
-        # Extract title
         if slide.shapes.title and slide.shapes.title.text.strip():
             slide_info["title"] = slide.shapes.title.text.strip()
 
-        # Extract shape text and tables
         shape_texts = []
         for shape in slide.shapes:
             if shape == slide.shapes.title:
@@ -102,7 +111,6 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
 
         slide_info["text_content"] = shape_texts
 
-        # Extract Speaker Notes ("the under part")
         speaker_notes = ""
         try:
             if slide.has_notes_slide:
@@ -115,7 +123,6 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
 
         slide_info["speaker_notes"] = speaker_notes
 
-        # Create combined raw text representation for this slide
         combined_text_parts = [f"=== Slide {idx}: {slide_info['title']} ==="]
         if shape_texts:
             combined_text_parts.append("\n".join(shape_texts))

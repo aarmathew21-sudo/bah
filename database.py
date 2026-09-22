@@ -16,7 +16,7 @@ def get_db():
     return conn
 
 def init_db():
-    """Initializes SQLite database tables for multi-user session management, card reviews (SM-2), and study caching."""
+    """Initializes SQLite database tables for sessions, slides, SM-2 reviews, and Quiz Master results."""
     with get_db() as conn:
         cursor = conn.cursor()
         
@@ -72,6 +72,22 @@ def init_db():
             )
         """)
         
+        # Quiz Master Exam Results table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS quiz_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                exam_title TEXT,
+                score INTEGER,
+                total_questions INTEGER,
+                percentage REAL,
+                time_spent_seconds INTEGER,
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions (session_id) ON DELETE CASCADE
+            )
+        """)
+        
         conn.commit()
     
     # Run routine session cleanup on initialization
@@ -100,6 +116,7 @@ def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
         cursor.execute("DELETE FROM slides WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM study_cache WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM card_reviews WHERE session_id = ?", (session_id,))
+        cursor.execute("DELETE FROM quiz_results WHERE session_id = ?", (session_id,))
         
         cursor.execute("""
             INSERT OR REPLACE INTO sessions (session_id, filename, total_slides, full_digest, created_at)
@@ -184,14 +201,78 @@ def get_study_cache(session_id: str, cache_key: str) -> Optional[Any]:
         return None
 
 
+# --- Quiz Master Results Persistence ---
+
+def save_quiz_result(
+    session_id: str,
+    exam_title: str,
+    score: int,
+    total_questions: int,
+    percentage: float,
+    time_spent_seconds: int,
+    details: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Saves a Quiz Master exam result in SQLite."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO quiz_results (
+                session_id, exam_title, score, total_questions, percentage, time_spent_seconds, details
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            session_id,
+            exam_title,
+            score,
+            total_questions,
+            percentage,
+            time_spent_seconds,
+            json.dumps(details)
+        ))
+        result_id = cursor.lastrowid
+        conn.commit()
+
+        return {
+            "id": result_id,
+            "exam_title": exam_title,
+            "score": score,
+            "total_questions": total_questions,
+            "percentage": percentage,
+            "time_spent_seconds": time_spent_seconds,
+            "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+
+def get_quiz_history(session_id: str) -> List[Dict[str, Any]]:
+    """Retrieves exam score history for a session."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, exam_title, score, total_questions, percentage, time_spent_seconds, created_at, details
+            FROM quiz_results
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+        """, (session_id,))
+        rows = cursor.fetchall()
+
+        history = []
+        for r in rows:
+            history.append({
+                "id": r["id"],
+                "exam_title": r["exam_title"],
+                "score": r["score"],
+                "total_questions": r["total_questions"],
+                "percentage": r["percentage"],
+                "time_spent_seconds": r["time_spent_seconds"],
+                "created_at": r["created_at"],
+                "details": json.loads(r["details"]) if r["details"] else []
+            })
+        return history
+
+
 # --- SM-2 Spaced Repetition Logic ---
 
 def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, Any]:
-    """
-    Implements standard SuperMemo-2 (SM-2) spaced repetition updates:
-    Rating maps to quality q: 'again' -> 0, 'hard' -> 3, 'good' -> 4, 'easy' -> 5.
-    Calculates interval_days, ease_factor, repetitions, and next_review_date.
-    """
+    """Implements standard SuperMemo-2 (SM-2) spaced repetition updates."""
     rating_map = {
         "again": 0,
         "hard": 3,
@@ -217,7 +298,6 @@ def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, 
             interval_days = 0
             repetitions = 0
 
-        # Standard SM-2 interval update logic
         if q < 3:
             repetitions = 0
             interval_days = 1
@@ -230,7 +310,6 @@ def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, 
                 interval_days = max(1, int(round(interval_days * ease_factor)))
             repetitions += 1
 
-        # Ease factor update formula
         ease_factor = ease_factor + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
         if ease_factor < 1.3:
             ease_factor = 1.3
@@ -266,10 +345,7 @@ def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, 
 
 
 def get_due_flashcards(session_id: str) -> Dict[str, Any]:
-    """
-    Returns flashcards from the session's cached deck where next_review_date <= now or unreviewed.
-    Cards are sorted so overdue cards come first.
-    """
+    """Returns flashcards due for SM-2 review."""
     all_cards = get_study_cache(session_id, "flashcards") or []
     if not all_cards:
         return {"due_flashcards": [], "total_due": 0, "total_cards": 0}
@@ -296,18 +372,15 @@ def get_due_flashcards(session_id: str) -> Dict[str, Any]:
             card_copy["next_review_date"] = rev["next_review_date"]
             card_copy["last_reviewed_at"] = rev["last_reviewed_at"]
             
-            # Due if next_review_date <= now
             if rev["next_review_date"] <= now_str:
                 due_cards.append(card_copy)
         else:
-            # Unreviewed card is due
             card_copy["ease_factor"] = 2.5
             card_copy["interval_days"] = 0
             card_copy["repetitions"] = 0
             card_copy["next_review_date"] = now_str
             due_cards.append(card_copy)
 
-    # Sort due cards: unreviewed first, then by next_review_date ascending
     due_cards.sort(key=lambda c: c.get("next_review_date", now_str))
 
     return {
@@ -335,3 +408,9 @@ async def async_record_card_review(session_id: str, card_id: str, rating: str) -
 
 async def async_get_due_flashcards(session_id: str) -> Dict[str, Any]:
     return await run_in_threadpool(get_due_flashcards, session_id)
+
+async def async_save_quiz_result(session_id: str, exam_title: str, score: int, total_questions: int, percentage: float, time_spent_seconds: int, details: List[Dict[str, Any]]):
+    return await run_in_threadpool(save_quiz_result, session_id, exam_title, score, total_questions, percentage, time_spent_seconds, details)
+
+async def async_get_quiz_history(session_id: str) -> List[Dict[str, Any]]:
+    return await run_in_threadpool(get_quiz_history, session_id)

@@ -51,12 +51,12 @@
                     <div class="upload-icon-wrapper">
                         <i class="fa-solid fa-cloud-arrow-up upload-icon" aria-hidden="true"></i>
                     </div>
-                    <h2>Upload PowerPoint (.pptx) or PDF (.pdf)</h2>
+                    <h2>Upload PowerPoint (.pptx / .ppt) or PDF (.pdf)</h2>
                     <p class="upload-desc">Extract slide text, tables, PDF lecture notes, and **speaker notes** automatically</p>
-                    <input type="file" id="fileInput" accept=".pptx, .pdf" hidden aria-label="Upload PowerPoint or PDF file" />
+                    <input type="file" id="fileInput" accept=".pptx, .ppt, .pdf" hidden aria-label="Upload PowerPoint or PDF file" />
                     <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
                         <button class="btn btn-primary btn-large" onclick="document.getElementById('fileInput').click()">
-                            <i class="fa-solid fa-folder-open" aria-hidden="true"></i> Choose File (.pptx / .pdf)
+                            <i class="fa-solid fa-folder-open" aria-hidden="true"></i> Choose File (.pptx / .ppt / .pdf)
                         </button>
                         <button class="btn btn-secondary btn-large" id="heroSampleBtn">
                             <i class="fa-solid fa-bolt" aria-hidden="true"></i> Try Sample Demo
@@ -110,6 +110,9 @@
                     </button>
                     <button class="tab-btn" data-tab="chatTab" role="tab" aria-selected="false" id="tab-chat">
                         <i class="fa-solid fa-robot" aria-hidden="true"></i> ChatGPT AI Teacher
+                    </button>
+                    <button class="tab-btn" data-tab="quizmasterTab" role="tab" aria-selected="false" id="tab-quizmaster">
+                        <i class="fa-solid fa-trophy" aria-hidden="true"></i> 🏆 Quiz Master Hub
                     </button>
                 </nav>
 
@@ -252,6 +255,113 @@
                                 <button id="sendChatBtn" class="btn btn-primary" aria-label="Send message"><i class="fa-solid fa-paper-plane" aria-hidden="true"></i></button>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- 6. QUIZ MASTER HUB TAB -->
+                    <div id="quizmasterTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-quizmaster">
+                        <div class="panel-header flex-between">
+                            <div>
+                                <h2><i class="fa-solid fa-trophy" aria-hidden="true"></i> 🏆 Quiz Master Hub</h2>
+                                <p class="panel-subtitle">Interactive exam simulator, timed mock tests, difficulty customization, and score tracking.</p>
+                            </div>
+                            <button class="btn btn-outline" id="viewQuizHistoryBtn" onclick="loadQuizMasterHistory()">
+                                <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Score History
+                            </button>
+                        </div>
+
+                        <!-- Exam Setup Configurator -->
+                        <div id="qmSetupCard" class="qm-card">
+                            <h3><i class="fa-solid fa-sliders" aria-hidden="true"></i> Exam Configurator</h3>
+                            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">Customize your mock exam settings based on your presentation content.</p>
+
+                            <div class="qm-form-grid">
+                                <div class="form-group">
+                                    <label for="qmDifficulty">Difficulty Level</label>
+                                    <select id="qmDifficulty" class="form-control">
+                                        <option value="Easy">🟢 Easy (Recall & Basics)</option>
+                                        <option value="Medium" selected>🟡 Medium (Conceptual & Reasoning)</option>
+                                        <option value="Hard">🔴 Hard (Deep Analysis & Scenarios)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="qmCount">Number of Questions</label>
+                                    <select id="qmCount" class="form-control">
+                                        <option value="3">3 Questions (Quick Check - 3 min)</option>
+                                        <option value="5" selected>5 Questions (Standard - 5 min)</option>
+                                        <option value="10">10 Questions (Full Exam - 10 min)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" style="grid-column: span 2;">
+                                    <label for="qmTopic">Focus Topic / Keyword (Optional)</label>
+                                    <input type="text" id="qmTopic" class="form-control" placeholder="e.g. Machine Learning, Slide 2, Speaker Notes..." />
+                                </div>
+                            </div>
+
+                            <button class="btn btn-primary btn-large" style="margin-top: 16px; width: 100%;" onclick="startQuizMasterExam()">
+                                <i class="fa-solid fa-play" aria-hidden="true"></i> Start Timed Exam
+                            </button>
+                        </div>
+
+                        <!-- Live Timed Exam Area (Hidden until started) -->
+                        <div id="qmExamCard" class="qm-card hidden">
+                            <div class="qm-exam-header">
+                                <div>
+                                    <h3 id="qmExamTitle">Quiz Master Mock Exam</h3>
+                                    <span id="qmQuestionProgress" class="badge badge-active">Question 1 of 5</span>
+                                </div>
+                                <div class="qm-timer-wrapper" id="qmTimerWrapper">
+                                    <i class="fa-solid fa-stopwatch" aria-hidden="true"></i>
+                                    <span id="qmTimerDisplay">05:00</span>
+                                </div>
+                            </div>
+
+                            <!-- Pagination Pills -->
+                            <div id="qmNavPills" class="qm-nav-pills"></div>
+
+                            <!-- Active Question Container -->
+                            <div id="qmActiveQuestionContainer" class="qm-question-box"></div>
+
+                            <div class="qm-exam-footer">
+                                <button class="btn btn-outline" id="qmPrevBtn" onclick="prevQuizMasterQuestion()"><i class="fa-solid fa-arrow-left"></i> Previous</button>
+                                <button class="btn btn-outline" id="qmFlagBtn" onclick="toggleFlagQuizMasterQuestion()"><i class="fa-regular fa-bookmark"></i> Flag Question</button>
+                                <button class="btn btn-primary" id="qmNextBtn" onclick="nextQuizMasterQuestion()">Next <i class="fa-solid fa-arrow-right"></i></button>
+                                <button class="btn btn-success hidden" id="qmSubmitBtn" onclick="submitQuizMasterExam()"><i class="fa-solid fa-check-double"></i> Submit Exam</button>
+                            </div>
+                        </div>
+
+                        <!-- Scorecard & Result Breakdown (Hidden until submitted) -->
+                        <div id="qmScorecardCard" class="qm-card hidden">
+                            <div class="qm-scorecard-header">
+                                <div class="qm-gauge-container">
+                                    <svg viewBox="0 0 36 36" class="qm-circular-chart">
+                                        <path class="qm-circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                        <path id="qmGaugePath" class="qm-circle" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                        <text x="18" y="20.35" class="qm-percentage" id="qmScorePercentText">0%</text>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h2 id="qmScoreGrade">Great Effort!</h2>
+                                    <p id="qmScoreSummaryText">You scored 0 out of 0 questions correctly.</p>
+                                    <div style="margin-top: 10px; display: flex; gap: 8px;">
+                                        <button class="btn btn-primary" onclick="resetQuizMasterSetup()"><i class="fa-solid fa-rotate"></i> New Exam</button>
+                                        <button class="btn btn-secondary" onclick="loadQuizMasterHistory()"><i class="fa-solid fa-clock-rotate-left"></i> View History</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <h3 style="margin-top: 24px; margin-bottom: 12px;"><i class="fa-solid fa-list-ol"></i> Detailed Review</h3>
+                            <div id="qmReviewContainer"></div>
+                        </div>
+
+                        <!-- Score History Card -->
+                        <div id="qmHistoryCard" class="qm-card hidden">
+                            <div class="flex-between" style="margin-bottom: 16px;">
+                                <h3><i class="fa-solid fa-clock-rotate-left"></i> Past Exam History</h3>
+                                <button class="btn btn-outline" onclick="closeQuizMasterHistory()"><i class="fa-solid fa-xmark"></i> Back to Configurator</button>
+                            </div>
+                            <div id="qmHistoryTableContainer"></div>
+                        </div>
+
                     </div>
 
                 </div>

@@ -11,11 +11,13 @@ from pydantic import BaseModel, Field
 
 from ppt_parser import extract_ppt_content, validate_upload_file
 from pdf_parser import extract_pdf_content
+from legacy_ppt_parser import extract_legacy_ppt_content
 from ai_study import (
     generate_study_summary,
     generate_flashcards,
     generate_quiz,
-    answer_study_chat
+    answer_study_chat,
+    generate_quizmaster_exam
 )
 from database import (
     init_db,
@@ -24,7 +26,9 @@ from database import (
     async_save_study_cache,
     async_get_study_cache,
     async_record_card_review,
-    async_get_due_flashcards
+    async_get_due_flashcards,
+    async_save_quiz_result,
+    async_get_quiz_history
 )
 from create_sample_ppt import create_sample_presentation
 
@@ -32,7 +36,7 @@ logger = logging.getLogger("ppt_main_app")
 
 app = FastAPI(
     title="PPT & PDF Text & Notes AI Study Assistant",
-    description="Multi-user FastAPI application for PowerPoint (.pptx) & PDF (.pdf) parsing, ChatGPT AI Tutoring, and SM-2 Spaced Repetition."
+    description="Multi-user FastAPI application for PowerPoint (.pptx / .ppt) & PDF (.pdf) parsing, ChatGPT AI Tutoring, and SM-2 Spaced Repetition."
 )
 
 # Configure trusted origins for CORS
@@ -47,7 +51,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Sliding window rate limiter memory store per session_id (30 calls per minute)
 RATE_LIMIT_STORE: Dict[str, List[float]] = {}
 
 def get_session_id(request: Request, response: Response, ppt_session_id: Optional[str] = Cookie(None)) -> str:
@@ -98,6 +101,20 @@ class ReviewRequest(BaseModel):
     card_id: str = Field(..., description="Stable card ID hash")
     rating: str = Field(..., description="Rating: again, hard, good, easy")
 
+class QuizMasterGenerateRequest(BaseModel):
+    difficulty: Optional[str] = Field("Medium", description="Exam difficulty: Easy, Medium, Hard")
+    topic: Optional[str] = Field(None, description="Custom focus topic")
+    question_count: Optional[int] = Field(5, description="Number of exam questions (3-20)")
+    api_key: Optional[str] = Field(None, description="Optional Gemini API key")
+
+class QuizMasterSubmitRequest(BaseModel):
+    exam_title: str = Field(..., description="Title or description of the exam")
+    score: int = Field(..., description="Number of correct answers")
+    total_questions: int = Field(..., description="Total questions in exam")
+    time_spent_seconds: int = Field(..., description="Time taken in seconds")
+    details: List[Dict[str, Any]] = Field(default_factory=list, description="Per-question review details")
+
+
 
 @app.post("/api/upload")
 async def upload_document(
@@ -106,9 +123,9 @@ async def upload_document(
     file: UploadFile = File(...),
     session_id: str = Depends(get_session_id)
 ):
-    """Uploads a PowerPoint (.pptx) or PDF (.pdf) file, validates size/structure, extracts content and notes per session."""
+    """Uploads a PowerPoint (.pptx / .ppt) or PDF (.pdf) file, validates size/structure, extracts content and notes per session."""
     if not file.filename or not file.filename.lower().endswith((".pptx", ".ppt", ".pdf")):
-        raise HTTPException(status_code=400, detail="Only PowerPoint (.pptx) and PDF (.pdf) files are supported.")
+        raise HTTPException(status_code=400, detail="Only PowerPoint (.pptx / .ppt) and PDF (.pdf) files are supported.")
 
     try:
         content = await file.read()
@@ -120,6 +137,8 @@ async def upload_document(
 
         if file_type == "pdf":
             parsed_data = extract_pdf_content(content)
+        elif file_type == "ppt_legacy":
+            parsed_data = extract_legacy_ppt_content(content)
         else:
             parsed_data = extract_ppt_content(content)
 
@@ -320,6 +339,80 @@ async def export_full_text(
         media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
+
+
+# --- Quiz Master Hub Endpoints ---
+
+@app.post("/api/quizmaster/generate", dependencies=[Depends(rate_limit_study_api)])
+async def generate_quizmaster(
+    req: Optional[QuizMasterGenerateRequest] = None,
+    session_id: str = Depends(get_session_id)
+):
+    """Generates an interactive Quiz Master exam based on difficulty, topic, and question count."""
+    req = req or QuizMasterGenerateRequest()
+    ppt_data = await async_get_session_presentation(session_id)
+    if not ppt_data:
+        raise HTTPException(status_code=400, detail="No document uploaded yet for your session.")
+
+    q_count = max(1, min(20, req.question_count or 5))
+    difficulty = req.difficulty if req.difficulty in ["Easy", "Medium", "Hard"] else "Medium"
+    
+    questions = generate_quizmaster_exam(
+        ppt_data=ppt_data,
+        difficulty=difficulty,
+        topic=req.topic,
+        question_count=q_count,
+        api_key=req.api_key
+    )
+
+    doc_name = ppt_data.get("filename", "Presentation")
+    topic_str = f" ({req.topic})" if req.topic else ""
+    exam_title = f"{difficulty} Exam{topic_str} - {doc_name}"
+
+    return {
+        "exam_title": exam_title,
+        "difficulty": difficulty,
+        "topic": req.topic,
+        "question_count": len(questions),
+        "time_limit_seconds": len(questions) * 60,
+        "questions": questions
+    }
+
+
+@app.post("/api/quizmaster/submit")
+async def submit_quizmaster(
+    req: QuizMasterSubmitRequest,
+    session_id: str = Depends(get_session_id)
+):
+    """Submits Quiz Master exam answers, calculates percentage score, and saves score result."""
+    total = req.total_questions if req.total_questions > 0 else len(req.details)
+    if total <= 0:
+        raise HTTPException(status_code=400, detail="Invalid exam submission: question count must be greater than 0.")
+
+    percentage = round((req.score / total) * 100.0, 1)
+
+    result = await async_save_quiz_result(
+        session_id=session_id,
+        exam_title=req.exam_title,
+        score=req.score,
+        total_questions=total,
+        percentage=percentage,
+        time_spent_seconds=req.time_spent_seconds,
+        details=req.details
+    )
+
+    return {"success": True, "result": result}
+
+
+@app.get("/api/quizmaster/history")
+async def get_quizmaster_history(
+    request: Request,
+    response: Response,
+    session_id: str = Depends(get_session_id)
+):
+    """Retrieves score history for all completed Quiz Master exams in this session."""
+    history = await async_get_quiz_history(session_id)
+    return {"history": history}
 
 
 # Serve static web files
