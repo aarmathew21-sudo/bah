@@ -2,30 +2,43 @@ import io
 import zipfile
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pdf_parser import validate_pdf_file, extract_pdf_content
 
 
-def validate_pptx_file(file_bytes: bytes, filename: str = "", max_size_mb: int = 50):
+def validate_upload_file(file_bytes: bytes, filename: str = "", max_size_mb: int = 50):
     """
-    Validates uploaded file size and inspects ZIP structure for valid PowerPoint presentation data.
-    Raises ValueError with user-friendly error message if validation fails.
+    Validates file size and inspects format headers for both PowerPoint (.pptx) and PDF (.pdf) files.
     """
-    # 1. Size Validation
     max_bytes = max_size_mb * 1024 * 1024
     if len(file_bytes) > max_bytes:
         raise ValueError(f"File size exceeds the maximum limit of {max_size_mb} MB.")
 
     if len(file_bytes) < 100:
-        raise ValueError("File is too small to be a valid PowerPoint presentation.")
+        raise ValueError("File is too small to be a valid document.")
 
-    # 2. Magic Header check for ZIP format
+    filename_lower = filename.lower()
+    if filename_lower.endswith(".pdf") or file_bytes.startswith(b"%PDF"):
+        validate_pdf_file(file_bytes, filename=filename, max_size_mb=max_size_mb)
+        return "pdf"
+    elif filename_lower.endswith((".pptx", ".ppt")) or file_bytes.startswith(b"PK\x03\x04"):
+        validate_pptx_file(file_bytes, filename=filename, max_size_mb=max_size_mb)
+        return "pptx"
+    else:
+        raise ValueError("Unsupported file format. Please upload a PowerPoint (.pptx) or PDF (.pdf) file.")
+
+
+def validate_pptx_file(file_bytes: bytes, filename: str = "", max_size_mb: int = 50):
+    """Validates uploaded PPTX file size and inspects ZIP structure."""
+    max_bytes = max_size_mb * 1024 * 1024
+    if len(file_bytes) > max_bytes:
+        raise ValueError(f"File size exceeds the maximum limit of {max_size_mb} MB.")
+
     if not file_bytes.startswith(b"PK\x03\x04"):
         raise ValueError("Invalid file format. The file is not a valid PowerPoint (.pptx) archive.")
 
-    # 3. Structure check inside ZIP archive
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
             namelist = zf.namelist()
-            # PowerPoint files MUST contain [Content_Types].xml and ppt/presentation.xml
             if "[Content_Types].xml" not in namelist or not any(name.startswith("ppt/") for name in namelist):
                 raise ValueError("Corrupt or unsupported presentation format. Missing PowerPoint XML structures.")
     except zipfile.BadZipFile:

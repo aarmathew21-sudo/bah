@@ -3,6 +3,7 @@ import json
 import os
 import logging
 from typing import Dict, Any, Optional
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger("ppt_study_db")
 DB_PATH = os.path.join(os.path.dirname(__file__), "study_store.db")
@@ -10,7 +11,6 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "study_store.db")
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    # Enable foreign key cascading deletes
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
@@ -80,15 +80,13 @@ def cleanup_expired_sessions(max_age_days: int = 30):
 
 
 def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
-    """Saves presentation content and slides scoped to a user session_id."""
+    """Synchronous core save function."""
     with get_db() as conn:
         cursor = conn.cursor()
         
-        # Delete existing data for this session if re-uploading
         cursor.execute("DELETE FROM slides WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM study_cache WHERE session_id = ?", (session_id,))
         
-        # Insert or replace session
         cursor.execute("""
             INSERT OR REPLACE INTO sessions (session_id, filename, total_slides, full_digest, created_at)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -99,7 +97,6 @@ def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
             parsed_data.get("full_digest", "")
         ))
         
-        # Insert slides
         for slide in parsed_data.get("slides", []):
             cursor.execute("""
                 INSERT INTO slides (session_id, slide_number, title, text_content, tables, speaker_notes, raw_text)
@@ -118,7 +115,7 @@ def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
 
 
 def get_session_presentation(session_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieves session presentation data."""
+    """Synchronous core retrieval function."""
     with get_db() as conn:
         cursor = conn.cursor()
         
@@ -152,7 +149,7 @@ def get_session_presentation(session_id: str) -> Optional[Dict[str, Any]]:
 
 
 def save_study_cache(session_id: str, cache_key: str, data: Any):
-    """Caches generated study material (summary/flashcards/quiz) for a session."""
+    """Synchronous core cache function."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -163,7 +160,7 @@ def save_study_cache(session_id: str, cache_key: str, data: Any):
 
 
 def get_study_cache(session_id: str, cache_key: str) -> Optional[Any]:
-    """Retrieves cached study material for a session."""
+    """Synchronous core cache retrieval function."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT data FROM study_cache WHERE session_id = ? AND cache_key = ?", (session_id, cache_key))
@@ -171,3 +168,17 @@ def get_study_cache(session_id: str, cache_key: str) -> Optional[Any]:
         if row and row["data"]:
             return json.loads(row["data"])
         return None
+
+
+# Threadpool Async Wrappers to prevent event-loop blocking under load
+async def async_save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
+    return await run_in_threadpool(save_session_presentation, session_id, parsed_data)
+
+async def async_get_session_presentation(session_id: str) -> Optional[Dict[str, Any]]:
+    return await run_in_threadpool(get_session_presentation, session_id)
+
+async def async_save_study_cache(session_id: str, cache_key: str, data: Any):
+    return await run_in_threadpool(save_study_cache, session_id, cache_key, data)
+
+async def async_get_study_cache(session_id: str, cache_key: str) -> Optional[Any]:
+    return await run_in_threadpool(get_study_cache, session_id, cache_key)

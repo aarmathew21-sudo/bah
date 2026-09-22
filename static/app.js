@@ -4,6 +4,7 @@ let currentFlashcardIndex = 0;
 let flashcardsList = [];
 let quizList = [];
 let chatHistory = [];
+let currentSpeech = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     initApiKey();
@@ -32,6 +33,65 @@ function hideError() {
     }
 }
 
+// Text-To-Speech (TTS Read Aloud)
+function speakText(text) {
+    if (!('speechSynthesis' in window)) {
+        alert('Text-to-speech is not supported in your browser.');
+        return;
+    }
+
+    window.speechSynthesis.cancel();
+    
+    // Clean markdown symbols for natural reading
+    const cleanText = text
+        .replace(/[*#_`~]/g, '')
+        .replace(/📌|👨‍🏫|💡|🧠|👋|📌/g, '')
+        .trim();
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    window.speechSynthesis.speak(utterance);
+}
+
+function stopSpeech() {
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+    }
+}
+
+function readAloudStudyGuide() {
+    const container = document.getElementById('summaryContainer');
+    if (container) {
+        speakText(container.textContent);
+    }
+}
+
+// Anki CSV Export Handler
+function exportAnkiCSV() {
+    if (!flashcardsList || flashcardsList.length === 0) {
+        alert('Please generate flashcards first before exporting to Anki.');
+        return;
+    }
+
+    let csvContent = "Front,Back,Category\n";
+    flashcardsList.forEach(card => {
+        const front = `"${(card.front || '').replace(/"/g, '""')}"`;
+        const back = `"${(card.back || '').replace(/"/g, '""')}"`;
+        const cat = `"${(card.category || '').replace(/"/g, '""')}"`;
+        csvContent += `${front},${back},${cat}\n`;
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Anki_Flashcards_${presentationData ? presentationData.filename : 'document'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
 // Session restoration on page load/refresh
 async function checkCurrentSession() {
     try {
@@ -41,7 +101,7 @@ async function checkCurrentSession() {
             presentationData = data;
             renderSlides(data.slides);
             document.getElementById('loadedFileName').textContent = data.filename;
-            document.getElementById('slideCountBadge').textContent = `${data.total_slides} Slides Extracted`;
+            document.getElementById('slideCountBadge').textContent = `${data.total_slides} Slides/Pages Extracted`;
             document.getElementById('tabSlideCount').textContent = data.total_slides;
 
             document.getElementById('uploadSection').classList.add('hidden');
@@ -128,7 +188,7 @@ async function loadSampleDemo() {
 
         renderSlides(data.slides);
         document.getElementById('loadedFileName').textContent = data.filename;
-        document.getElementById('slideCountBadge').textContent = `${data.total_slides} Slides Extracted`;
+        document.getElementById('slideCountBadge').textContent = `${data.total_slides} Slides/Pages Extracted`;
         document.getElementById('tabSlideCount').textContent = data.total_slides;
 
         loadingOverlay.classList.add('hidden');
@@ -171,7 +231,7 @@ function initSearch() {
     }
 }
 
-// File Upload Logic
+// File Upload Logic (.pptx and .pdf)
 function initFileUpload() {
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
@@ -214,8 +274,9 @@ function initFileUpload() {
 
 async function handleFileUpload(file) {
     hideError();
-    if (!file.name.toLowerCase().endsWith('.pptx')) {
-        showError('Please upload a valid PowerPoint (.pptx) file.');
+    const fname = file.name.toLowerCase();
+    if (!fname.endsWith('.pptx') && !fname.endsWith('.pdf')) {
+        showError('Please upload a valid PowerPoint (.pptx) or PDF (.pdf) file.');
         return;
     }
 
@@ -246,20 +307,20 @@ async function handleFileUpload(file) {
         renderSlides(data.slides);
 
         document.getElementById('loadedFileName').textContent = data.filename;
-        document.getElementById('slideCountBadge').textContent = `${data.total_slides} Slides Extracted`;
+        document.getElementById('slideCountBadge').textContent = `${data.total_slides} Slides/Pages Extracted`;
         document.getElementById('tabSlideCount').textContent = data.total_slides;
 
         loadingOverlay.classList.add('hidden');
         workspaceSection.classList.remove('hidden');
 
     } catch (err) {
-        showError('Error parsing PowerPoint file: ' + err.message);
+        showError('Error parsing document file: ' + err.message);
         loadingOverlay.classList.add('hidden');
         uploadSection.classList.remove('hidden');
     }
 }
 
-// Render Slides & Speaker Notes
+// Render Slides & Speaker/PDF Notes
 function renderSlides(slides) {
     const container = document.getElementById('slidesContainer');
     container.innerHTML = '';
@@ -273,10 +334,10 @@ function renderSlides(slides) {
         header.innerHTML = `
             <div>
                 <span class="slide-title">${escapeHtml(slide.title)}</span>
-                <span class="slide-num-badge" style="margin-left: 8px;">Slide ${slide.slide_number}</span>
+                <span class="slide-num-badge" style="margin-left: 8px;">Page/Slide ${slide.slide_number}</span>
             </div>
             <button class="teach-slide-btn" onclick="teachSlide(${slide.slide_number}, '${escapeHtml(slide.title).replace(/'/g, "\\'")}')">
-                <i class="fa-solid fa-graduation-cap"></i> Teach Me This Slide
+                <i class="fa-solid fa-graduation-cap"></i> Teach Me This
             </button>
         `;
 
@@ -318,9 +379,9 @@ function renderSlides(slides) {
         
         notesBox.innerHTML = `
             <div class="speaker-notes-header">
-                <i class="fa-solid fa-note-sticky"></i> Speaker Notes / Under-slide Info:
+                <i class="fa-solid fa-note-sticky"></i> Speaker / PDF Notes:
             </div>
-            <div class="speaker-notes-content">${hasNotes ? escapeHtml(slide.speaker_notes) : '<em>No speaker notes present on this slide.</em>'}</div>
+            <div class="speaker-notes-content">${hasNotes ? escapeHtml(slide.speaker_notes) : '<em>No extra speaker/annotation notes on this page.</em>'}</div>
         `;
         body.appendChild(notesBox);
 
@@ -331,11 +392,10 @@ function renderSlides(slides) {
 }
 
 function teachSlide(num, title) {
-    // Switch to Chat tab
     const chatTabBtn = document.querySelector('.tab-btn[data-tab="chatTab"]');
     if (chatTabBtn) chatTabBtn.click();
 
-    sendSuggestedQuestion(`Teach me Slide ${num}: "${title}". Explain all points and hidden speaker notes in simple terms.`);
+    sendSuggestedQuestion(`Teach me Page/Slide ${num}: "${title}". Explain all points and speaker/PDF notes in simple terms.`);
 }
 
 // Navigation Tabs
@@ -410,7 +470,7 @@ async function loadStudySummary() {
         if (data.speaker_note_highlights && data.speaker_note_highlights.length > 0) {
             html += `
                 <div class="summary-section">
-                    <h3><i class="fa-solid fa-sticky-note"></i> Key Speaker Notes Highlights</h3>
+                    <h3><i class="fa-solid fa-sticky-note"></i> Key Speaker / PDF Notes Highlights</h3>
                     <ul style="padding-left: 20px; line-height: 1.6;">
             `;
             data.speaker_note_highlights.forEach(h => {
@@ -653,7 +713,7 @@ async function handleSendChat() {
         removeChatMessage(typingId);
 
         const reply = data.reply || 'Sorry, I could not generate a response.';
-        appendChatMessage('ai', reply);
+        appendChatMessage('ai', reply, false, true); // true for read aloud button
         chatHistory.push({ role: 'assistant', content: reply });
 
     } catch (err) {
@@ -663,14 +723,19 @@ async function handleSendChat() {
     }
 }
 
-function appendChatMessage(sender, text, isTyping = false) {
+function appendChatMessage(sender, text, isTyping = false, addAudio = false) {
     const container = document.getElementById('chatMessages');
     const msgDiv = document.createElement('div');
     const msgId = 'msg_' + Date.now();
     msgDiv.id = msgId;
     msgDiv.className = `message message-${sender}`;
 
-    msgDiv.innerHTML = `<div class="message-content">${escapeHtml(text)}</div>`;
+    let audioBtn = '';
+    if (sender === 'ai' && !isTyping && addAudio) {
+        audioBtn = `<button onclick="speakText(\`${escapeHtml(text).replace(/`/g, "'")}\`)" title="Read out loud" style="background: transparent; border: none; font-size: 13px; color: var(--primary); cursor: pointer; margin-top: 6px; display: block;"><i class="fa-solid fa-volume-high"></i> Listen</button>`;
+    }
+
+    msgDiv.innerHTML = `<div class="message-content">${escapeHtml(text)}${audioBtn}</div>`;
     container.appendChild(msgDiv);
     container.scrollTop = container.scrollHeight;
     return msgId;
