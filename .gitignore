@@ -3,3 +3,5 @@ __pycache__/
 .venv/
 *.log
 .DS_Store
+*.db
+study_store.db

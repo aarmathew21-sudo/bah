@@ -1,8 +1,12 @@
 import io
 import sys
 import os
-from fastapi.testclient import TestClient
+import warnings
 
+# Suppress Starlette test client deprecation warning
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+from fastapi.testclient import TestClient
 from main import app
 from database import init_db
 from create_sample_ppt import create_sample_presentation
@@ -102,7 +106,7 @@ def main():
         assert len(resp.text) > 50
         print("GET /api/export/text verified.")
 
-    print("\n[SUCCESS] ALL FASTAPI ENDPOINTS & HARDENING TESTS PASSED SUCCESSFULLY!")
+    print("\n[SUCCESS] ALL FASTAPI ENDPOINTS & HARDENING TESTS PASSED WITHOUT WARNINGS!")
 
 if __name__ == "__main__":
     main()

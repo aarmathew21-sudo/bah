@@ -1,13 +1,17 @@
 import sqlite3
 import json
 import os
+import logging
 from typing import Dict, Any, Optional
 
+logger = logging.getLogger("ppt_study_db")
 DB_PATH = os.path.join(os.path.dirname(__file__), "study_store.db")
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # Enable foreign key cascading deletes
+    conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
 def init_db():
@@ -53,6 +57,26 @@ def init_db():
         """)
         
         conn.commit()
+    
+    # Run routine session cleanup on initialization
+    cleanup_expired_sessions(max_age_days=30)
+
+
+def cleanup_expired_sessions(max_age_days: int = 30):
+    """
+    Evicts sessions created older than max_age_days to prevent database bloat.
+    Cascading deletes remove associated slides and cached study items automatically.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM sessions WHERE created_at < datetime('now', ?)", (f"-{max_age_days} days",))
+            deleted = cursor.rowcount
+            conn.commit()
+            if deleted > 0:
+                logger.info(f"Evicted {deleted} expired session(s) older than {max_age_days} days.")
+    except Exception as e:
+        logger.error(f"Error executing session cleanup: {str(e)}")
 
 
 def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
@@ -66,8 +90,8 @@ def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
         
         # Insert or replace session
         cursor.execute("""
-            INSERT OR REPLACE INTO sessions (session_id, filename, total_slides, full_digest)
-            VALUES (?, ?, ?, ?)
+            INSERT OR REPLACE INTO sessions (session_id, filename, total_slides, full_digest, created_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, (
             session_id,
             parsed_data.get("filename", "presentation.pptx"),
