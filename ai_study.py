@@ -48,6 +48,42 @@ def _get_genai_client(api_key: Optional[str] = None):
         return None
 
 
+DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+def _generate_content_with_fallback(client, prompt: str):
+    """Attempts generation with DEFAULT_GEMINI_MODEL ('gemini-2.5-flash'), and gracefully falls back to 'gemini-2.0-flash' or 'gemini-1.5-flash' if 404 / deprecated model error occurs."""
+    models_to_try = [
+        DEFAULT_GEMINI_MODEL,
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-2.5-pro",
+        "gemini-1.5-pro"
+    ]
+    unique_models = []
+    for m in models_to_try:
+        if m and m not in unique_models:
+            unique_models.append(m)
+
+    last_exc = None
+    for mod in unique_models:
+        try:
+            logger.info(f"Attempting content generation with model: '{mod}'")
+            return client.models.generate_content(
+                model=mod,
+                contents=prompt
+            )
+        except Exception as e:
+            last_exc = e
+            err_msg = str(e).lower()
+            if any(term in err_msg for term in ["not_found", "404", "no longer available", "invalid", "not found"]):
+                logger.warning(f"Gemini model '{mod}' returned error ({str(e)}). Retrying with next model candidate...")
+                continue
+            raise e
+    if last_exc:
+        raise last_exc
+
+
 def generate_stable_card_id(front_text: str) -> str:
     """Generates a stable 16-char SHA256 hash for card question text."""
     clean = front_text.strip().lower()
@@ -55,43 +91,41 @@ def generate_stable_card_id(front_text: str) -> str:
 
 
 def generate_study_summary(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> Dict[str, Any]:
-    """Generates structured overview and key study topics."""
+    """Generates comprehensive structured overview and key study topics."""
     digest = ppt_data.get("full_digest", "")
     slides = ppt_data.get("slides", [])
     
     client = _get_genai_client(api_key)
     if client:
-        prompt = f"""You are an enthusiastic ChatGPT AI Teacher helping a student master their presentation material.
+        prompt = f"""You are an expert AI Educator and Professor creating a master Study Guide for a student.
 
-Presentation Digest (including hidden speaker notes):
+Presentation Material & Presenter Notes:
 {digest}
 
-Task: Create an easy-to-understand, engaging Study Guide.
+Task: Synthesize a thorough, highly readable Study Guide that extracts core domain knowledge, definitions, formulas, tables, and speaker note insights.
+
 Return a valid JSON object with the following schema:
 {{
-  "title": "Overall Presentation Topic",
-  "summary": "2-3 sentence engaging overview written like a friendly teacher introducing the topic",
+  "title": "Clear Main Topic Title",
+  "summary": "3-4 sentence comprehensive, encouraging overview outlining what the student will master from this material",
   "key_concepts": [
     {{
-      "concept": "Concept Name",
-      "explanation": "Simple, clear breakdown with an analogy or real-world example",
+      "concept": "Core Concept / Term Name",
+      "explanation": "Thorough, simple breakdown explaining how it works with a practical analogy or real-world example",
       "slides_referenced": "Slide numbers e.g. Slide 1, 3"
     }}
   ],
   "speaker_note_highlights": [
-    "Important presenter insights extracted from speaker notes"
+    "Important presenter insight or hidden test clue extracted directly from speaker notes"
   ],
   "study_tips": [
-    "Actionable tip for mastering this material"
+    "Actionable, high-yield tip for mastering this presentation material"
   ]
 }}
 Respond ONLY with the JSON block.
 """
         try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt
-            )
+            response = _generate_content_with_fallback(client, prompt)
             txt = response.text.strip()
             txt = re.sub(r'^```json\s*', '', txt)
             txt = re.sub(r'\s*```$', '', txt)
@@ -99,7 +133,7 @@ Respond ONLY with the JSON block.
         except Exception as e:
             logger.error(f"Gemini API error in summary generation: {str(e)}")
 
-    # Fallback smart extraction
+    # Smart local fallback extraction
     concepts = []
     notes_highlights = []
     for s in slides:
@@ -111,7 +145,7 @@ Respond ONLY with the JSON block.
         if texts:
             concepts.append({
                 "concept": t,
-                "explanation": f"Key focus: {' '.join(texts[:2]) if len(texts) > 0 else 'See slide content.'}",
+                "explanation": f"Key takeaway: {' '.join(texts[:3]) if len(texts) > 0 else 'See slide content.'}",
                 "slides_referenced": f"Slide {num}"
             })
         if notes:
@@ -119,44 +153,48 @@ Respond ONLY with the JSON block.
 
     return {
         "title": slides[0]["title"] if slides else "Presentation Study Guide",
-        "summary": f"Welcome! I am your AI Teacher. Here is your study roadmap for these {len(slides)} slides and speaker notes.",
+        "summary": f"Welcome! Here is your structured study guide for these {len(slides)} slides and speaker notes.",
         "key_concepts": concepts[:8],
         "speaker_note_highlights": notes_highlights[:5],
         "study_tips": [
-            "💡 Tip: Review speaker notes closely - teachers often put test questions there!",
-            "🧠 Active Recall: Use the Flashcards tab to test yourself after reading each slide."
+            "💡 Tip: Pay close attention to speaker notes - key exam insights are frequently placed there!",
+            "🧠 Active Recall: Use the Flashcards and Quiz Master tabs to test your recall."
         ]
     }
 
 
 def generate_flashcards(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> List[Dict[str, str]]:
-    """Generates active recall study flashcards with stable card IDs for SM-2 spaced repetition tracking."""
+    """Generates high-yield active recall flashcards with stable card IDs for SM-2 spaced repetition tracking."""
     digest = ppt_data.get("full_digest", "")
     slides = ppt_data.get("slides", [])
 
     cards = []
     client = _get_genai_client(api_key)
     if client:
-        prompt = f"""You are a master educator. Create 8 to 15 active-recall flashcards based on these slides and presenter notes.
+        prompt = f"""You are a master university professor and pedagogical expert crafting high-yield active-recall study flashcards.
 
-Presentation Data:
+Presentation Digest & Speaker Notes:
 {digest}
+
+Instructions:
+1. Create 10 to 18 specific, high-yield active-recall flashcards based on the text, tables, and speaker notes.
+2. DO NOT create vague or generic questions like "What is covered in Slide 1?". Instead, test specific definitions, core formulas, key differences, technical terminology, presenter note insights, and slide tables.
+3. On the front, ask a targeted question or present a key concept to define.
+4. On the back, provide a thorough, easy-to-understand answer with bullet points, examples, and key takeaways.
+5. In category, specify the topic or slide reference (e.g. "Slide 3: Convolutional Nets" or "Speaker Notes Insight").
 
 Return a valid JSON array of objects with schema:
 [
   {{
-    "front": "Question or term requiring active recall",
-    "back": "Clear, concise answer with key takeaway",
-    "category": "Slide reference or topic"
+    "front": "Specific concept or targeted question requiring active recall...",
+    "back": "Clear, comprehensive answer with key takeaways and explanation...",
+    "category": "Topic or slide reference"
   }}
 ]
 Respond ONLY with the JSON array.
 """
         try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt
-            )
+            response = _generate_content_with_fallback(client, prompt)
             txt = response.text.strip()
             txt = re.sub(r'^```json\s*', '', txt)
             txt = re.sub(r'\s*```$', '', txt)
@@ -167,7 +205,7 @@ Respond ONLY with the JSON array.
             logger.error(f"Gemini API error in flashcard generation: {str(e)}")
 
     if not cards:
-        # Fallback cards
+        # Smart local fallback cards
         for s in slides:
             num = s["slide_number"]
             title = s["title"]
@@ -175,16 +213,17 @@ Respond ONLY with the JSON array.
             text_content = s.get("text_content", [])
 
             if text_content:
+                main_pts = "\n• ".join(text_content)
                 cards.append({
-                    "front": f"What are the main concepts covered in: '{title}'?",
-                    "back": "\n• ".join([""] + text_content),
-                    "category": f"Slide {num}"
+                    "front": f"What are the core technical principles and takeaways of: '{title}'?",
+                    "back": f"Key takeaway details:\n• {main_pts}",
+                    "category": f"Slide {num}: {title}"
                 })
 
             if notes:
                 cards.append({
-                    "front": f"What hidden presenter note is under '{title}'?",
-                    "back": notes,
+                    "front": f"What presenter note insight is associated with '{title}'?",
+                    "back": f"📌 Presenter Note:\n{notes}",
                     "category": f"Slide {num} Notes"
                 })
 
@@ -197,34 +236,36 @@ Respond ONLY with the JSON array.
 
 
 def generate_quiz(ppt_data: Dict[str, Any], api_key: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Generates multiple-choice quiz questions."""
+    """Generates domain-specific multiple-choice quiz questions with teacher explanations."""
     digest = ppt_data.get("full_digest", "")
     slides = ppt_data.get("slides", [])
 
     client = _get_genai_client(api_key)
     if client:
-        prompt = f"""Generate a 5-10 question multiple-choice quiz based on these slides and presenter notes.
+        prompt = f"""You are a senior exam designer. Create a high-quality 6 to 10 question multiple-choice practice test based on these slides and presenter notes.
 
-Presentation Data:
+Presentation Digest & Notes:
 {digest}
+
+Instructions:
+1. Questions MUST test actual domain knowledge, core concepts, formulas, presenter notes, and specific slide data.
+2. Create 4 realistic, distinct options (A, B, C, D). Avoid obvious throwaway options like "None of the above" or "All of the above".
+3. Provide a helpful, encouraging teacher explanation for every question detailing why the correct answer is right and why distractors are incorrect.
 
 Return a valid JSON array of question objects:
 [
   {{
     "id": 1,
-    "question": "Question text...",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "question": "Targeted question stem testing key material...",
+    "options": ["Realistic Option A", "Realistic Option B", "Realistic Option C", "Realistic Option D"],
     "answer_index": 0,
-    "explanation": "Friendly teacher explanation explaining why this answer is correct."
+    "explanation": "👨‍🏫 Teacher Explanation detailing the rationale and slide/notes citation."
   }}
 ]
 Respond ONLY with the JSON array.
 """
         try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt
-            )
+            response = _generate_content_with_fallback(client, prompt)
             txt = response.text.strip()
             txt = re.sub(r'^```json\s*', '', txt)
             txt = re.sub(r'\s*```$', '', txt)
@@ -241,12 +282,12 @@ Respond ONLY with the JSON array.
             main_pt = s["text_content"][0]
             quiz.append({
                 "id": idx,
-                "question": f"Regarding Slide {s['slide_number']} ({s['title']}), which statement is correct?",
+                "question": f"Regarding Slide {s['slide_number']} ({s['title']}), which statement accurately reflects the core takeaway?",
                 "options": [
                     main_pt,
-                    "This concept is not mentioned in the presentation.",
-                    "The presenter noted that this topic will be skipped.",
-                    "None of the above."
+                    f"The main focus of {s['title']} is unrelated to the presentation domain.",
+                    "The presenter noted that this topic will be skipped in exams.",
+                    "This concept is only relevant for initial setup."
                 ],
                 "answer_index": 0,
                 "explanation": f"👨‍🏫 Teacher Note: Slide {s['slide_number']} highlights: {main_pt}"
@@ -267,7 +308,7 @@ def generate_quizmaster_exam(
 
     topic_context = f"\nFocus heavily on topic/keyword: '{topic}'" if topic else ""
     difficulty_instructions = {
-        "Easy": "Questions should test direct factual recall, definitions, and basic slide bullet points.",
+        "Easy": "Questions should test direct factual recall, definitions, and key slide bullet points.",
         "Medium": "Questions should test conceptual understanding, connections between topics, and presenter note insights.",
         "Hard": "Questions should feature scenario-based application, critical analysis, multi-step reasoning, and edge-case evaluation."
     }
@@ -275,32 +316,34 @@ def generate_quizmaster_exam(
 
     client = _get_genai_client(api_key)
     if client:
-        prompt = f"""You are a university exam designer creating a {difficulty} difficulty exam.
+        prompt = f"""You are an elite university examiner creating a {difficulty} difficulty exam.
 Total Questions: {question_count}
 Difficulty Guidelines ({difficulty}): {diff_desc}{topic_context}
 
-Presentation Material:
+Presentation Material & Presenter Notes:
 {digest}
+
+Instructions:
+1. Produce {question_count} deep, realistic multiple-choice exam questions tailored to the specified difficulty ({difficulty}).
+2. Provide 4 plausible options without placeholder text.
+3. Include comprehensive, detailed solution explanations citing specific slide numbers and presenter notes.
 
 Return a valid JSON array of question objects:
 [
   {{
     "id": 1,
-    "question": "Clear, challenging question stem...",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "question": "Challenging, domain-specific question stem...",
+    "options": ["Plausible Option A", "Plausible Option B", "Plausible Option C", "Plausible Option D"],
     "answer_index": 0,
-    "explanation": "Comprehensive solution explanation detailing why the correct answer is right and others are incorrect.",
+    "explanation": "Detailed solution breakdown with slide & speaker note citations.",
     "difficulty": "{difficulty}",
-    "topic": "{topic or 'General Presentation'}"
+    "topic": "{topic or 'Presentation Material'}"
   }}
 ]
 Respond ONLY with the JSON array.
 """
         try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt
-            )
+            response = _generate_content_with_fallback(client, prompt)
             txt = response.text.strip()
             txt = re.sub(r'^```json\s*', '', txt)
             txt = re.sub(r'\s*```$', '', txt)
@@ -344,7 +387,7 @@ Respond ONLY with the JSON array.
             "options": [
                 main_pt,
                 "This concept is explicitly refuted in the speaker notes.",
-                "It applies only in deprecated legacy hardware environments.",
+                "It applies only in legacy systems.",
                 "None of the above."
             ],
             "answer_index": 0,
@@ -354,7 +397,6 @@ Respond ONLY with the JSON array.
         })
 
     return exam_q[:question_count]
-
 
 
 def answer_study_chat(
@@ -397,10 +439,7 @@ Behavior Rules:
         prompt = f"{system_instruction}\n\nRecent Conversation:\n{formatted_history}\nStudent: {user_message}\nAI Teacher:"
 
         try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt
-            )
+            response = _generate_content_with_fallback(client, prompt)
             return response.text.strip()
         except Exception as e:
             logger.error(f"Gemini API chat error: {str(e)}")
