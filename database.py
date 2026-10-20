@@ -27,6 +27,7 @@ def init_db():
                 filename TEXT,
                 total_slides INTEGER,
                 full_digest TEXT,
+                metadata TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -42,9 +43,25 @@ def init_db():
                 tables TEXT,
                 speaker_notes TEXT,
                 raw_text TEXT,
+                doc_name TEXT DEFAULT '',
+                doc_slide_number INTEGER DEFAULT 0,
                 FOREIGN KEY (session_id) REFERENCES sessions (session_id) ON DELETE CASCADE
             )
         """)
+        
+        # Migrations for existing DB instances
+        try:
+            cursor.execute("ALTER TABLE slides ADD COLUMN doc_name TEXT DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE slides ADD COLUMN doc_slide_number INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN metadata TEXT DEFAULT ''")
+        except Exception:
+            pass
         
         # Study items cache table
         cursor.execute("""
@@ -87,6 +104,18 @@ def init_db():
                 FOREIGN KEY (session_id) REFERENCES sessions (session_id) ON DELETE CASCADE
             )
         """)
+
+        # Session Memory table (commits student insights, topics explored, weak spots, custom goals)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS session_memory (
+                session_id TEXT,
+                memory_key TEXT,
+                memory_value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (session_id, memory_key),
+                FOREIGN KEY (session_id) REFERENCES sessions (session_id) ON DELETE CASCADE
+            )
+        """)
         
         conn.commit()
     
@@ -117,21 +146,28 @@ def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
         cursor.execute("DELETE FROM study_cache WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM card_reviews WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM quiz_results WHERE session_id = ?", (session_id,))
+        cursor.execute("DELETE FROM session_memory WHERE session_id = ?", (session_id,))
         
+        metadata = {
+            "filenames": parsed_data.get("filenames", [parsed_data.get("filename", "presentation.pptx")]),
+            "documents": parsed_data.get("documents", [])
+        }
+
         cursor.execute("""
-            INSERT OR REPLACE INTO sessions (session_id, filename, total_slides, full_digest, created_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT OR REPLACE INTO sessions (session_id, filename, total_slides, full_digest, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, (
             session_id,
             parsed_data.get("filename", "presentation.pptx"),
             parsed_data.get("total_slides", 0),
-            parsed_data.get("full_digest", "")
+            parsed_data.get("full_digest", ""),
+            json.dumps(metadata)
         ))
         
         for slide in parsed_data.get("slides", []):
             cursor.execute("""
-                INSERT INTO slides (session_id, slide_number, title, text_content, tables, speaker_notes, raw_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO slides (session_id, slide_number, title, text_content, tables, speaker_notes, raw_text, doc_name, doc_slide_number)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session_id,
                 slide.get("slide_number"),
@@ -139,7 +175,9 @@ def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
                 json.dumps(slide.get("text_content", [])),
                 json.dumps(slide.get("tables", [])),
                 slide.get("speaker_notes", ""),
-                slide.get("raw_text", "")
+                slide.get("raw_text", ""),
+                slide.get("doc_name", parsed_data.get("filename", "")),
+                slide.get("doc_slide_number", slide.get("slide_number", 1))
             ))
             
         conn.commit()
@@ -159,22 +197,38 @@ def get_session_presentation(session_id: str) -> Optional[Dict[str, Any]]:
         cursor.execute("SELECT * FROM slides WHERE session_id = ? ORDER BY slide_number ASC", (session_id,))
         slide_rows = cursor.fetchall()
         
+        col_names = [col[0] for col in cursor.description]
+        has_doc_name = "doc_name" in col_names
+        has_doc_slide_number = "doc_slide_number" in col_names
+        
         slides = []
         for r in slide_rows:
-            slides.append({
+            slide_dict = {
                 "slide_number": r["slide_number"],
                 "title": r["title"],
                 "text_content": json.loads(r["text_content"]) if r["text_content"] else [],
                 "tables": json.loads(r["tables"]) if r["tables"] else [],
                 "speaker_notes": r["speaker_notes"],
-                "raw_text": r["raw_text"]
-            })
+                "raw_text": r["raw_text"],
+                "doc_name": r["doc_name"] if has_doc_name and r["doc_name"] else session_row["filename"],
+                "doc_slide_number": r["doc_slide_number"] if has_doc_slide_number and r["doc_slide_number"] else r["slide_number"]
+            }
+            slides.append(slide_dict)
             
+        metadata = {}
+        if "metadata" in session_row.keys() and session_row["metadata"]:
+            try:
+                metadata = json.loads(session_row["metadata"])
+            except Exception:
+                pass
+
         return {
             "session_id": session_row["session_id"],
             "filename": session_row["filename"],
             "total_slides": session_row["total_slides"],
             "full_digest": session_row["full_digest"],
+            "filenames": metadata.get("filenames", [session_row["filename"]]),
+            "documents": metadata.get("documents", []),
             "slides": slides
         }
 
@@ -414,3 +468,44 @@ async def async_save_quiz_result(session_id: str, exam_title: str, score: int, t
 
 async def async_get_quiz_history(session_id: str) -> List[Dict[str, Any]]:
     return await run_in_threadpool(get_quiz_history, session_id)
+
+
+def save_session_memory(session_id: str, memory_key: str, memory_value: str):
+    """Stores key insights, topics discussed, or student preferences for the active session."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO session_memory (session_id, memory_key, memory_value, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        """, (session_id, memory_key, memory_value))
+        conn.commit()
+
+
+def get_all_session_memory(session_id: str) -> Dict[str, str]:
+    """Retrieves all stored session memory items for the active session."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT memory_key, memory_value FROM session_memory WHERE session_id = ? ORDER BY updated_at ASC", (session_id,))
+        rows = cursor.fetchall()
+        return {r["memory_key"]: r["memory_value"] for r in rows}
+
+
+def clear_session_memory(session_id: str):
+    """Clears all session memory for the active session."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM session_memory WHERE session_id = ?", (session_id,))
+        conn.commit()
+
+
+async def async_save_session_memory(session_id: str, memory_key: str, memory_value: str):
+    return await run_in_threadpool(save_session_memory, session_id, memory_key, memory_value)
+
+
+async def async_get_all_session_memory(session_id: str) -> Dict[str, str]:
+    return await run_in_threadpool(get_all_session_memory, session_id)
+
+
+async def async_clear_session_memory(session_id: str):
+    return await run_in_threadpool(clear_session_memory, session_id)
+
