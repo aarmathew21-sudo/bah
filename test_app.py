@@ -502,6 +502,82 @@ def main():
     assert "Presenter note: Discuss CPI versus core inflation metrics." in slide_0["speaker_notes"]
     print("Legacy .ppt parser test passed: bullets containing 'note' stayed in slide body and speaker notes parsed from 0x03F0 container!")
 
+    # I) Test Corrupt Slide XML Warning (Bug 8a)
+    print("\n--- 9. Testing Corrupt Slide XML Warning (Bug 8a) ---")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", b"<Types></Types>")
+        zf.writestr("ppt/slides/slide1.xml", b"<invalid xml content << broken")
+    corrupt_pptx = buf.getvalue()
+    warn_res = extract_ppt_content(corrupt_pptx)
+    assert len(warn_res.get("warnings", [])) > 0
+    assert warn_res["warnings"][0]["slide_number"] == 1
+    assert "XML could not be parsed" in warn_res["warnings"][0]["message"]
+    print("Corrupt slide XML warning test passed: caught XML parse error and populated warning structure.")
+
+    # J) Test Live Gemini API Key Verification (Bug 8b)
+    print("\n--- 10. Testing Gemini Key Verification Endpoint & Never Echoing Key (Bug 8b) ---")
+    test_key = "invalid-secret-key-12345"
+    resp = client.post("/api/ai/check", json={"api_key": test_key})
+    assert resp.status_code == 200
+    check_data = resp.json()
+    assert check_data["valid"] is False
+    assert check_data["status"] in ("invalid_key", "error", "no_library")
+    assert test_key not in resp.text
+    print("Gemini key check test passed: properly verified key and never echoed sensitive credentials.")
+
+    # K) Test Gamification Progress, Server-Side XP, Level and Streak
+    print("\n--- 11. Testing Gamification Progress, Server-Side XP & Streak Endpoints ---")
+    prog_resp = client.get("/api/progress")
+    assert prog_resp.status_code == 200
+    prog_data = prog_resp.json()
+    assert "xp" in prog_data
+    assert "streak_days" in prog_data
+    assert "level" in prog_data
+    assert "recommended_mission" in prog_data
+
+    # Test event recording
+    ev_resp = client.post("/api/progress/event", json={
+        "event_type": "card_reviewed",
+        "payload": {"rating": "easy"}
+    })
+    assert ev_resp.status_code == 200
+    ev_data = ev_resp.json()
+    assert ev_data["xp_earned"] == 20
+    assert ev_data["total_xp"] >= 20
+    print("Progress & server-side XP event test passed!")
+
+    # L) Test Mastery Map Endpoint & Slide Association
+    print("\n--- 12. Testing Mastery Map Endpoint & Per-Slide Stats ---")
+    mastery_resp = client.get("/api/study/mastery")
+    assert mastery_resp.status_code == 200
+    m_data = mastery_resp.json()
+    assert "slides" in m_data
+    assert "weak_spots" in m_data
+    assert "overall_mastery" in m_data
+    assert len(m_data["slides"]) > 0
+    first_tile = m_data["slides"][0]
+    assert "slide_number" in first_tile
+    assert "mastery_score" in first_tile
+    assert "status" in first_tile
+    print("Mastery Map test passed: tiles accurately reflect slide numbers, mastery scores, and weak spots.")
+
+    # M) Test Feynman Technique Explanation Endpoint
+    print("\n--- 13. Testing Feynman Technique Explanation Endpoint ---")
+    feynman_resp = client.post("/api/study/feynman", json={
+        "topic": "Gradient Descent",
+        "explanation": "Gradient descent works by calculating the derivative of the loss function and taking small steps in the opposite direction of the gradient to minimize error.",
+        "slide_number": 1
+    })
+    assert feynman_resp.status_code == 200
+    f_data = feynman_resp.json()
+    assert "clarity_score" in f_data
+    assert 0 <= f_data["clarity_score"] <= 100
+    assert "strengths" in f_data
+    assert "feedback" in f_data
+    assert "progress" in f_data
+    print("Feynman Technique test passed: evaluated explanation, scored clarity, and awarded XP!")
+
     print("\n" + "=" * 80)
     print("[SUCCESS] ALL SYSTEM, REST, SM-2, QUIZ MASTER, FALLBACK, AND LEGACY PPT TESTS PASSED!")
     print("=" * 80)

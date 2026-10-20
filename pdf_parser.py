@@ -33,6 +33,7 @@ def extract_pdf_content(file_bytes: bytes) -> Dict[str, Any]:
     reader = pypdf.PdfReader(io.BytesIO(file_bytes))
     slides_data = []
     full_text_blocks = []
+    warnings = []
 
     for idx, page in enumerate(reader.pages, start=1):
         # 1. Multi-mode text extraction (Layout + Default comparison)
@@ -81,12 +82,21 @@ def extract_pdf_content(file_bytes: bytes) -> Dict[str, Any]:
 
         page_notes = " | ".join(page_notes_list) if page_notes_list else ""
 
+        has_warn = False
+        warn_msg = ""
+        if not lines and not page_notes:
+            has_warn = True
+            warn_msg = f"Page {idx} contains no extractable text or annotations (scanned image or empty page)."
+            warnings.append({"slide_number": idx, "message": warn_msg})
+
         slide_info = {
             "slide_number": idx,
             "title": title,
             "text_content": lines,
             "tables": [],
             "speaker_notes": page_notes,
+            "has_warning": has_warn,
+            "warning_message": warn_msg,
             "raw_text": f"=== Page {idx}: {title} ===\n" + "\n".join(lines) + (f"\n📌 PDF Notes: {page_notes}" if page_notes else "")
         }
 
@@ -98,5 +108,6 @@ def extract_pdf_content(file_bytes: bytes) -> Dict[str, Any]:
     return {
         "total_slides": len(reader.pages),
         "slides": slides_data,
-        "full_digest": full_digest
+        "full_digest": full_digest,
+        "warnings": warnings
     }

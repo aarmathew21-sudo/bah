@@ -233,12 +233,20 @@ def extract_legacy_ppt_content(file_bytes: bytes) -> Dict[str, Any]:
         if s_notes:
             raw_parts.append(f"📌 Speaker Notes (Presenter Info):\n{s_notes}")
 
+        has_warn = False
+        warn_msg = ""
+        if not body and not s_notes and (not s_title or s_title == f"Slide {idx}"):
+            has_warn = True
+            warn_msg = f"Slide {idx} contained no readable text or container data."
+
         slides_data.append({
             "slide_number": idx,
             "title": s_title,
             "text_content": body,
             "tables": [],
             "speaker_notes": s_notes,
+            "has_warning": has_warn,
+            "warning_message": warn_msg,
             "raw_text": "\n\n".join(raw_parts)
         })
 
@@ -254,6 +262,8 @@ def extract_legacy_ppt_content(file_bytes: bytes) -> Dict[str, Any]:
                 "text_content": f_body,
                 "tables": [],
                 "speaker_notes": "",
+                "has_warning": False,
+                "warning_message": "",
                 "raw_text": f"=== Slide 1: {f_title} ===\n" + "\n".join(f_body)
             })
         else:
@@ -263,16 +273,23 @@ def extract_legacy_ppt_content(file_bytes: bytes) -> Dict[str, Any]:
                 "text_content": ["Extracted content from legacy presentation."],
                 "tables": [],
                 "speaker_notes": "",
+                "has_warning": True,
+                "warning_message": "Legacy presentation structure could not be parsed into individual slides.",
                 "raw_text": "=== Slide 1: PowerPoint Presentation ===\nExtracted content from legacy presentation."
             })
 
+    warnings = [
+        {"slide_number": s["slide_number"], "message": s["warning_message"]}
+        for s in slides_data if s.get("has_warning")
+    ]
     full_text_blocks = [s["raw_text"] for s in slides_data]
     full_digest = "\n\n" + ("=" * 40) + "\n\n".join(full_text_blocks)
 
     return {
         "total_slides": len(slides_data),
         "slides": slides_data,
-        "full_digest": full_digest
+        "full_digest": full_digest,
+        "warnings": warnings
     }
 
 

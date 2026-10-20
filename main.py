@@ -24,7 +24,10 @@ from ai_study import (
     answer_study_chat,
     generate_quizmaster_exam,
     _get_genai_client,
-    validate_and_sanitize_api_key
+    validate_and_sanitize_api_key,
+    verify_gemini_api_key,
+    generate_follow_up_chips,
+    evaluate_feynman_explanation
 )
 from database import (
     init_db,
@@ -38,7 +41,10 @@ from database import (
     async_get_quiz_history,
     async_save_session_memory,
     async_get_all_session_memory,
-    async_clear_session_memory
+    async_clear_session_memory,
+    async_get_progress,
+    async_record_progress_event,
+    async_get_mastery
 )
 from create_sample_ppt import create_sample_presentation
 
@@ -164,6 +170,7 @@ def combine_parsed_documents(parsed_docs: List[Dict[str, Any]]) -> Dict[str, Any
     digest_blocks = []
     documents_summary = []
     filenames = []
+    all_warnings = []
     global_idx = 1
     
     for doc_idx, doc in enumerate(parsed_docs, start=1):
@@ -191,11 +198,24 @@ def combine_parsed_documents(parsed_docs: List[Dict[str, Any]]) -> Dict[str, Any
             slide_copy["doc_name"] = doc_fname
             slide_copy["doc_slide_number"] = orig_num
             
+            if slide_copy.get("has_warning"):
+                all_warnings.append({
+                    "slide_number": global_idx,
+                    "doc_name": doc_fname,
+                    "message": slide_copy.get("warning_message", f"Slide {global_idx} could not be read.")
+                })
+
             all_slides.append(slide_copy)
             doc_digest_lines.append(slide_copy.get("raw_text", ""))
             global_idx += 1
             
         digest_blocks.append("\n\n".join(doc_digest_lines))
+
+    # Also capture document-level warnings
+    for doc in parsed_docs:
+        for w in doc.get("warnings", []):
+            if not any(aw.get("slide_number") == w.get("slide_number") for aw in all_warnings):
+                all_warnings.append(w)
         
     full_digest = "\n\n" + ("\n\n".join(digest_blocks))
     
@@ -213,7 +233,8 @@ def combine_parsed_documents(parsed_docs: List[Dict[str, Any]]) -> Dict[str, Any
         "total_slides": len(all_slides),
         "documents": documents_summary,
         "slides": all_slides,
-        "full_digest": full_digest
+        "full_digest": full_digest,
+        "warnings": all_warnings
     }
 
 
@@ -315,7 +336,8 @@ async def upload_document(
             "total_documents": combined_data["total_documents"],
             "total_slides": combined_data["total_slides"],
             "documents": combined_data["documents"],
-            "slides": combined_data["slides"]
+            "slides": combined_data["slides"],
+            "warnings": combined_data.get("warnings", [])
         }
     except HTTPException:
         raise
@@ -463,7 +485,8 @@ async def review_card(
         raise HTTPException(status_code=404, detail=f"Card '{req.card_id}' not found in session flashcard deck.")
 
     result = await async_record_card_review(session_id, req.card_id, req.rating)
-    return {"success": True, "review": result}
+    prog = await async_record_progress_event(session_id, "card_reviewed", {"rating": req.rating, "card_id": req.card_id})
+    return {"success": True, "review": result, "progress": prog}
 
 
 @app.post("/api/study/quiz", dependencies=[Depends(rate_limit_study_api)])
@@ -523,7 +546,9 @@ async def chat_tutor(
             await async_save_session_memory(session_id, k, str(v))
 
     updated_memory = await async_get_all_session_memory(session_id)
-    return {"reply": reply, "session_memory": updated_memory}
+    follow_ups = generate_follow_up_chips(reply, req.message, ppt_data)
+    await async_record_progress_event(session_id, "chat_used", {})
+    return {"reply": reply, "follow_ups": follow_ups, "session_memory": updated_memory}
 
 
 @app.get("/api/study/chat/memory")
@@ -652,14 +677,70 @@ class AiCheckRequest(BaseModel):
     api_key: Optional[str] = Field(None, description="Gemini API key to validate")
 
 
-@app.post("/api/ai/check")
+@app.post("/api/ai/check", dependencies=[Depends(rate_limit_study_api)])
 async def ai_check(req: AiCheckRequest):
-    """Validates if the provided API key can initialize a functional Gemini GenAI client."""
-    client = _get_genai_client(req.api_key)
-    if client:
-        return {"client_available": True, "reason": "Gemini API client initialized successfully."}
-    else:
-        return {"client_available": False, "reason": "Could not initialize Gemini API client. Please verify your API key."}
+    """Validates if the provided API key is functional using a live 1-token call. Never echoes the key back."""
+    result = verify_gemini_api_key(req.api_key)
+    return {
+        "valid": result.get("valid", False),
+        "status": result.get("status", "error"),
+        "client_available": result.get("client_available", False),
+        "reason": result.get("reason", "Verification complete.")
+    }
+
+
+class ProgressEventRequest(BaseModel):
+    event_type: str = Field(..., max_length=50, description="Type of study event (card_reviewed, quiz_answered, exam_finished, chat_used, feynman_completed)")
+    payload: Optional[Dict[str, Any]] = Field(default=None, description="Event metadata (rating, score, slide_number, etc.)")
+
+
+@app.get("/api/progress")
+async def get_study_progress_endpoint(session_id: str = Depends(get_session_id)):
+    """Retrieves session gamification progress, streak, level, XP, and daily mission."""
+    return await async_get_progress(session_id)
+
+
+@app.post("/api/progress/event")
+async def record_study_event_endpoint(req: ProgressEventRequest, session_id: str = Depends(get_session_id)):
+    """Records a progress event with strictly server-side calculated XP and streak rules."""
+    return await async_record_progress_event(session_id, req.event_type, req.payload)
+
+
+@app.get("/api/study/mastery")
+async def get_study_mastery_endpoint(session_id: str = Depends(get_session_id)):
+    """Retrieves slide-by-slide mastery status, scores, and highlighted weak spots."""
+    return await async_get_mastery(session_id)
+
+
+class FeynmanRequest(BaseModel):
+    topic: str = Field(..., min_length=1, max_length=500, description="Concept or topic being explained")
+    explanation: str = Field(..., min_length=5, max_length=5000, description="Student's explanation in their own words")
+    slide_number: Optional[int] = Field(None, description="Target slide number")
+    api_key: Optional[str] = Field(None, description="Optional Gemini API key")
+
+
+@app.post("/api/study/feynman", dependencies=[Depends(rate_limit_study_api)])
+async def study_feynman_endpoint(req: FeynmanRequest, session_id: str = Depends(get_session_id)):
+    """Evaluates student's explanation using the Feynman Technique and awards server-side XP."""
+    ppt_data = await async_get_session_presentation(session_id)
+    if not ppt_data:
+        raise HTTPException(status_code=400, detail="No document uploaded yet for your session.")
+
+    eval_result = evaluate_feynman_explanation(
+        concept=req.topic,
+        explanation=req.explanation,
+        ppt_data=ppt_data,
+        slide_number=req.slide_number,
+        api_key=req.api_key
+    )
+
+    prog = await async_record_progress_event(
+        session_id,
+        "feynman_completed",
+        {"clarity_score": eval_result.get("clarity_score", 70), "slide_number": req.slide_number}
+    )
+    eval_result["progress"] = prog
+    return eval_result
 
 
 # --- Quiz Master Hub Endpoints ---
@@ -729,7 +810,13 @@ async def submit_quizmaster(
         details=req.details
     )
 
-    return {"success": True, "result": result}
+    prog = await async_record_progress_event(
+        session_id,
+        "exam_finished",
+        {"score": req.score, "total_questions": req.total_questions}
+    )
+
+    return {"success": True, "result": result, "progress": prog}
 
 
 @app.get("/api/quizmaster/history")

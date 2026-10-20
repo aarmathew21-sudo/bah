@@ -116,6 +116,31 @@ def init_db():
                 FOREIGN KEY (session_id) REFERENCES sessions (session_id) ON DELETE CASCADE
             )
         """)
+
+        # Study Progress & Gamification table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS study_progress (
+                session_id TEXT PRIMARY KEY,
+                xp INTEGER DEFAULT 0,
+                streak_days INTEGER DEFAULT 1,
+                last_active_date TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions (session_id) ON DELETE CASCADE
+            )
+        """)
+
+        try:
+            cursor.execute("ALTER TABLE slides ADD COLUMN has_warning INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE slides ADD COLUMN warning_message TEXT DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE card_reviews ADD COLUMN slide_number INTEGER DEFAULT 0")
+        except Exception:
+            pass
         
         conn.commit()
     
@@ -166,8 +191,8 @@ def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
         
         for slide in parsed_data.get("slides", []):
             cursor.execute("""
-                INSERT INTO slides (session_id, slide_number, title, text_content, tables, speaker_notes, raw_text, doc_name, doc_slide_number)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO slides (session_id, slide_number, title, text_content, tables, speaker_notes, raw_text, doc_name, doc_slide_number, has_warning, warning_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session_id,
                 slide.get("slide_number"),
@@ -177,9 +202,18 @@ def save_session_presentation(session_id: str, parsed_data: Dict[str, Any]):
                 slide.get("speaker_notes", ""),
                 slide.get("raw_text", ""),
                 slide.get("doc_name", parsed_data.get("filename", "")),
-                slide.get("doc_slide_number", slide.get("slide_number", 1))
+                slide.get("doc_slide_number", slide.get("slide_number", 1)),
+                1 if slide.get("has_warning") else 0,
+                slide.get("warning_message", "")
             ))
             
+        # Ensure session has a progress record
+        today_date = datetime.utcnow().strftime("%Y-%m-%d")
+        cursor.execute("""
+            INSERT OR IGNORE INTO study_progress (session_id, xp, streak_days, last_active_date)
+            VALUES (?, 0, 1, ?)
+        """, (session_id, today_date))
+
         conn.commit()
 
 
@@ -200,6 +234,8 @@ def get_session_presentation(session_id: str) -> Optional[Dict[str, Any]]:
         col_names = [col[0] for col in cursor.description]
         has_doc_name = "doc_name" in col_names
         has_doc_slide_number = "doc_slide_number" in col_names
+        has_warning_col = "has_warning" in col_names
+        has_warning_msg_col = "warning_message" in col_names
         
         slides = []
         for r in slide_rows:
@@ -211,7 +247,9 @@ def get_session_presentation(session_id: str) -> Optional[Dict[str, Any]]:
                 "speaker_notes": r["speaker_notes"],
                 "raw_text": r["raw_text"],
                 "doc_name": r["doc_name"] if has_doc_name and r["doc_name"] else session_row["filename"],
-                "doc_slide_number": r["doc_slide_number"] if has_doc_slide_number and r["doc_slide_number"] else r["slide_number"]
+                "doc_slide_number": r["doc_slide_number"] if has_doc_slide_number and r["doc_slide_number"] else r["slide_number"],
+                "has_warning": bool(r["has_warning"]) if has_warning_col and r["has_warning"] else False,
+                "warning_message": r["warning_message"] if has_warning_msg_col and r["warning_message"] else ""
             }
             slides.append(slide_dict)
             
@@ -325,8 +363,8 @@ def get_quiz_history(session_id: str) -> List[Dict[str, Any]]:
 
 # --- SM-2 Spaced Repetition Logic ---
 
-def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, Any]:
-    """Implements standard SuperMemo-2 (SM-2) spaced repetition updates."""
+def record_card_review(session_id: str, card_id: str, rating: str, slide_number: Optional[int] = None) -> Dict[str, Any]:
+    """Implements standard SuperMemo-2 (SM-2) spaced repetition updates and associates cards with slide_number."""
     rating_map = {
         "again": 0,
         "hard": 3,
@@ -334,6 +372,17 @@ def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, 
         "easy": 5
     }
     q = rating_map.get(rating.lower(), 4)
+
+    # If slide_number not provided, attempt lookup from cached flashcards
+    if not slide_number:
+        try:
+            cached_cards = get_study_cache(session_id, "flashcards") or []
+            for c in cached_cards:
+                if c.get("card_id") == card_id:
+                    slide_number = c.get("slide_number", 0)
+                    break
+        except Exception:
+            slide_number = 0
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -375,8 +424,8 @@ def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, 
 
         cursor.execute("""
             INSERT OR REPLACE INTO card_reviews (
-                session_id, card_id, ease_factor, interval_days, repetitions, next_review_date, last_reviewed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                session_id, card_id, ease_factor, interval_days, repetitions, next_review_date, last_reviewed_at, slide_number
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             session_id,
             card_id,
@@ -384,7 +433,8 @@ def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, 
             interval_days,
             repetitions,
             next_review_str,
-            now_str
+            now_str,
+            slide_number or 0
         ))
         conn.commit()
 
@@ -394,7 +444,8 @@ def record_card_review(session_id: str, card_id: str, rating: str) -> Dict[str, 
             "ease_factor": ease_factor,
             "interval_days": interval_days,
             "repetitions": repetitions,
-            "next_review_date": next_review_str
+            "next_review_date": next_review_str,
+            "slide_number": slide_number or 0
         }
 
 
@@ -508,4 +559,332 @@ async def async_get_all_session_memory(session_id: str) -> Dict[str, str]:
 
 async def async_clear_session_memory(session_id: str):
     return await run_in_threadpool(clear_session_memory, session_id)
+
+
+def get_level_info(xp: int) -> Dict[str, Any]:
+    """Computes level name, badge, and progress to next level based on server-side XP."""
+    if xp < 100:
+        return {
+            "level": "Novice",
+            "level_num": 1,
+            "badge": "🌱 Novice",
+            "current_xp": xp,
+            "min_xp": 0,
+            "next_level_xp": 100,
+            "progress_pct": min(100, max(0, int((xp / 100) * 100)))
+        }
+    elif xp < 250:
+        return {
+            "level": "Apprentice",
+            "level_num": 2,
+            "badge": "⚡ Apprentice",
+            "current_xp": xp,
+            "min_xp": 100,
+            "next_level_xp": 250,
+            "progress_pct": min(100, max(0, int(((xp - 100) / 150) * 100)))
+        }
+    elif xp < 500:
+        return {
+            "level": "Scholar",
+            "level_num": 3,
+            "badge": "📚 Scholar",
+            "current_xp": xp,
+            "min_xp": 250,
+            "next_level_xp": 500,
+            "progress_pct": min(100, max(0, int(((xp - 250) / 250) * 100)))
+        }
+    elif xp < 1000:
+        return {
+            "level": "Master",
+            "level_num": 4,
+            "badge": "🛡️ Master",
+            "current_xp": xp,
+            "min_xp": 500,
+            "next_level_xp": 1000,
+            "progress_pct": min(100, max(0, int(((xp - 500) / 500) * 100)))
+        }
+    else:
+        return {
+            "level": "Sage",
+            "level_num": 5,
+            "badge": "🧙 Sage",
+            "current_xp": xp,
+            "min_xp": 1000,
+            "next_level_xp": 1000,
+            "progress_pct": 100
+        }
+
+
+def get_progress(session_id: str) -> Dict[str, Any]:
+    """Retrieves gamification progress, streak, XP, level, and next mission recommendation."""
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT xp, streak_days, last_active_date FROM study_progress WHERE session_id = ?", (session_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            cursor.execute("""
+                INSERT OR IGNORE INTO study_progress (session_id, xp, streak_days, last_active_date)
+                VALUES (?, 0, 1, ?)
+            """, (session_id, today_str))
+            conn.commit()
+            xp = 0
+            streak_days = 1
+            last_active = today_str
+        else:
+            xp = row["xp"]
+            streak_days = row["streak_days"]
+            last_active = row["last_active_date"]
+
+    if last_active and last_active != today_str and last_active != yesterday_str:
+        streak_days = 1
+
+    due_info = get_due_flashcards(session_id)
+    cards_due_count = due_info.get("total_due", 0)
+
+    mastery_info = get_mastery(session_id)
+    weak_spots = mastery_info.get("weak_spots", [])
+    weakest_slide_num = weak_spots[0] if weak_spots else (1 if mastery_info.get("slides") else None)
+    weakest_title = f"Slide {weakest_slide_num}" if weakest_slide_num else "General Review"
+    if weakest_slide_num and mastery_info.get("slides"):
+        for sm in mastery_info["slides"]:
+            if sm["slide_number"] == weakest_slide_num:
+                weakest_title = sm["title"]
+                break
+
+    if cards_due_count > 0:
+        recommended_mission = {
+            "type": "flashcards",
+            "title": f"Review {cards_due_count} Due Card{'s' if cards_due_count > 1 else ''}",
+            "description": f"Solidify memory with active recall SM-2 intervals.",
+            "target_tab": "tab-flashcards",
+            "button_label": "Start Deck Run"
+        }
+    elif weakest_slide_num and weak_spots:
+        recommended_mission = {
+            "type": "mastery",
+            "title": f"Reinforce Weak Spot: Slide {weakest_slide_num}",
+            "description": f"Master '{weakest_title[:32]}' with Socratic guidance.",
+            "target_tab": "tab-mastery",
+            "button_label": "Review Weak Spot"
+        }
+    else:
+        recommended_mission = {
+            "type": "quizmaster",
+            "title": "Challenge Quiz Master Boss",
+            "description": "Put your understanding to the test in Boss Battle mode.",
+            "target_tab": "tab-quizmaster",
+            "button_label": "Enter Boss Battle"
+        }
+
+    level_data = get_level_info(xp)
+
+    return {
+        "xp": xp,
+        "streak_days": streak_days,
+        "last_active_date": last_active or today_str,
+        "daily_goal_xp": 20,
+        "cards_due_count": cards_due_count,
+        "weak_spots": weak_spots,
+        "weakest_slide": weakest_slide_num,
+        "weakest_slide_title": weakest_title,
+        "level": level_data,
+        "recommended_mission": recommended_mission
+    }
+
+
+def record_progress_event(session_id: str, event_type: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Records a study event and computes server-side XP and streak increments (never trusts client XP)."""
+    payload = payload or {}
+
+    if event_type == "card_reviewed":
+        rating = str(payload.get("rating", "good")).lower()
+        xp_map = {"again": 5, "hard": 10, "good": 15, "easy": 20}
+        earned_xp = xp_map.get(rating, 10)
+    elif event_type == "quiz_answered":
+        is_correct = bool(payload.get("is_correct", True))
+        earned_xp = 15 if is_correct else 5
+    elif event_type == "exam_finished":
+        score = int(payload.get("score", 0))
+        earned_xp = 50 + max(0, score * 5)
+    elif event_type == "chat_used":
+        earned_xp = 10
+    elif event_type == "feynman_completed":
+        clarity = int(payload.get("clarity_score", 70))
+        earned_xp = 25 + min(50, max(0, int(clarity * 0.5)))
+    else:
+        earned_xp = 10
+
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT xp, streak_days, last_active_date FROM study_progress WHERE session_id = ?", (session_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            streak = 1
+            current_xp = 0
+        else:
+            current_xp = row["xp"]
+            last_date = row["last_active_date"]
+            stored_streak = row["streak_days"]
+
+            if not last_date:
+                streak = 1
+            elif last_date == today_str:
+                streak = stored_streak
+            elif last_date == yesterday_str:
+                streak = stored_streak + 1
+            else:
+                streak = 1
+
+        new_xp = current_xp + earned_xp
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO study_progress (session_id, xp, streak_days, last_active_date, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (session_id, new_xp, streak, today_str))
+        conn.commit()
+
+    return {
+        "success": True,
+        "event_type": event_type,
+        "xp_earned": earned_xp,
+        "total_xp": new_xp,
+        "streak_days": streak,
+        "level": get_level_info(new_xp)
+    }
+
+
+def get_mastery(session_id: str) -> Dict[str, Any]:
+    """Calculates granular slide-by-slide mastery scores based on SM-2 card intervals and quiz performance."""
+    presentation = get_session_presentation(session_id)
+    if not presentation:
+        return {"slides": [], "weak_spots": [], "overall_mastery": 0}
+
+    slides = presentation.get("slides", [])
+    if not slides:
+        return {"slides": [], "weak_spots": [], "overall_mastery": 0}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT card_id, slide_number, ease_factor, interval_days, repetitions FROM card_reviews WHERE session_id = ?", (session_id,))
+        review_rows = cursor.fetchall()
+        reviews = [dict(r) for r in review_rows]
+
+        cursor.execute("SELECT details FROM quiz_results WHERE session_id = ?", (session_id,))
+        quiz_rows = cursor.fetchall()
+
+    reviews_by_slide: Dict[int, List[Dict[str, Any]]] = {}
+    for r in reviews:
+        s_num = r.get("slide_number", 0)
+        if s_num > 0:
+            reviews_by_slide.setdefault(s_num, []).append(r)
+
+    quiz_results_by_slide: Dict[int, List[bool]] = {}
+    for qr in quiz_rows:
+        if qr["details"]:
+            try:
+                dtls = json.loads(qr["details"])
+                for d in dtls:
+                    s_num = d.get("slide_number")
+                    if s_num and isinstance(s_num, int):
+                        is_corr = d.get("is_correct", d.get("selected_index") == d.get("correct_index"))
+                        quiz_results_by_slide.setdefault(s_num, []).append(bool(is_corr))
+            except Exception:
+                pass
+
+    cached_cards = get_study_cache(session_id, "flashcards") or []
+    cards_count_by_slide: Dict[int, int] = {}
+    for c in cached_cards:
+        s_num = c.get("slide_number", 0)
+        if s_num > 0:
+            cards_count_by_slide[s_num] = cards_count_by_slide.get(s_num, 0) + 1
+
+    slides_mastery = []
+    total_score_sum = 0
+
+    for s in slides:
+        s_num = s["slide_number"]
+        s_title = s.get("title", f"Slide {s_num}")
+        has_warn = s.get("has_warning", False)
+        warn_msg = s.get("warning_message", "")
+
+        score = 0
+        s_revs = reviews_by_slide.get(s_num, [])
+        s_quizzes = quiz_results_by_slide.get(s_num, [])
+
+        if s_revs:
+            avg_interval = sum(r["interval_days"] for r in s_revs) / len(s_revs)
+            avg_reps = sum(r["repetitions"] for r in s_revs) / len(s_revs)
+            if avg_interval >= 6 or avg_reps >= 2:
+                score += 55
+            elif avg_interval >= 1 or avg_reps >= 1:
+                score += 35
+            else:
+                score += 15
+
+        if s_quizzes:
+            correct_ratio = sum(1 for q in s_quizzes if q) / len(s_quizzes)
+            score += int(correct_ratio * 45)
+
+        mastery_score = min(100, score)
+        total_score_sum += mastery_score
+
+        if mastery_score == 0:
+            status = "empty"
+        elif mastery_score < 70:
+            status = "learning"
+        else:
+            status = "mastered"
+
+        slides_mastery.append({
+            "slide_number": s_num,
+            "title": s_title,
+            "mastery_score": mastery_score,
+            "status": status,
+            "cards_count": cards_count_by_slide.get(s_num, len(s_revs)),
+            "is_weak_spot": False,
+            "has_warning": has_warn,
+            "warning_message": warn_msg,
+            "speaker_notes": s.get("speaker_notes", ""),
+            "text_content": s.get("text_content", []),
+            "tables": s.get("tables", [])
+        })
+
+    tested_weak = [sm for sm in slides_mastery if 0 < sm["mastery_score"] < 70]
+    untested = [sm for sm in slides_mastery if sm["mastery_score"] == 0]
+
+    candidate_weak = tested_weak if tested_weak else untested
+    candidate_weak.sort(key=lambda x: x["mastery_score"])
+    weak_spots_nums = [sm["slide_number"] for sm in candidate_weak[:3]]
+
+    for sm in slides_mastery:
+        if sm["slide_number"] in weak_spots_nums:
+            sm["is_weak_spot"] = True
+
+    overall_avg = int(total_score_sum / max(1, len(slides_mastery)))
+
+    return {
+        "slides": slides_mastery,
+        "weak_spots": weak_spots_nums,
+        "overall_mastery": overall_avg
+    }
+
+
+async def async_get_progress(session_id: str) -> Dict[str, Any]:
+    return await run_in_threadpool(get_progress, session_id)
+
+
+async def async_record_progress_event(session_id: str, event_type: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return await run_in_threadpool(record_progress_event, session_id, event_type, payload)
+
+
+async def async_get_mastery(session_id: str) -> Dict[str, Any]:
+    return await run_in_threadpool(get_mastery, session_id)
 

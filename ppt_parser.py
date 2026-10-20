@@ -167,7 +167,8 @@ def _extract_xml_slide_data(zf: zipfile.ZipFile, slide_path: str) -> Dict[str, A
         "smartart_text": [],
         "chart_text": [],
         "comments": [],
-        "xml_notes": ""
+        "xml_notes": "",
+        "xml_error": None
     }
 
     try:
@@ -256,8 +257,8 @@ def _extract_xml_slide_data(zf: zipfile.ZipFile, slide_path: str) -> Dict[str, A
                                 result["comments"].append(elem.text.strip())
                     except Exception:
                         pass
-    except Exception:
-        pass
+    except Exception as e:
+        result["xml_error"] = str(e)
 
     return result
 
@@ -275,6 +276,7 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
     """
     slides_data = []
     full_text_blocks = []
+    warnings = []
 
     # 1. Open with python-pptx for structural hierarchy
     prs = None
@@ -390,6 +392,21 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
             slide_info["speaker_notes"] = speaker_notes
 
             # --- D. Build Unified Text Block for Slide ---
+            slide_warnings = []
+            if xml_data.get("xml_error"):
+                slide_warnings.append(f"Slide {idx} XML could not be parsed: {xml_data['xml_error']}")
+            elif not shape_texts and not tables_data and not speaker_notes:
+                slide_warnings.append(f"Slide {idx} contained no readable text or visual elements.")
+
+            if slide_warnings:
+                warn_msg = "; ".join(slide_warnings)
+                slide_info["has_warning"] = True
+                slide_info["warning_message"] = warn_msg
+                warnings.append({"slide_number": idx, "message": warn_msg})
+            else:
+                slide_info["has_warning"] = False
+                slide_info["warning_message"] = ""
+
             combined_parts = [f"=== Slide {idx}: {slide_info['title']} ==="]
             if shape_texts:
                 combined_parts.append("\n".join(shape_texts))
@@ -409,7 +426,8 @@ def extract_ppt_content(file_bytes: bytes) -> dict:
     return {
         "total_slides": len(slides_data),
         "slides": slides_data,
-        "full_digest": full_digest
+        "full_digest": full_digest,
+        "warnings": warnings
     }
 
 

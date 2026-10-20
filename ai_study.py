@@ -49,6 +49,113 @@ def _get_genai_client(api_key: Optional[str] = None):
         return None
 
 
+def verify_gemini_api_key(api_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Performs a real minimal 1-token test against Gemini to verify key validity.
+    Distinguishes: 'valid', 'invalid_key', 'quota_exhausted', 'network_error'.
+    Never logs or echoes the raw API key.
+    """
+    sanitized_key = validate_and_sanitize_api_key(api_key) or os.environ.get("GEMINI_API_KEY")
+    if not sanitized_key:
+        return {
+            "valid": False,
+            "status": "invalid_key",
+            "client_available": False,
+            "reason": "Missing or improperly formatted API key."
+        }
+
+    if not HAS_GENAI:
+        return {
+            "valid": False,
+            "status": "no_library",
+            "client_available": False,
+            "reason": "Google GenAI SDK is not available in environment."
+        }
+
+    try:
+        client = genai.Client(api_key=sanitized_key)
+    except Exception as e:
+        logger.warning(f"Failed to create GenAI client during verification: {str(e)}")
+        return {
+            "valid": False,
+            "status": "invalid_key",
+            "client_available": False,
+            "reason": f"Failed to initialize client: {str(e)}"
+        }
+
+    candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"]
+    last_err_status = "error"
+    last_err_msg = ""
+
+    for model_name in candidate_models:
+        try:
+            config = None
+            if hasattr(types, "GenerateContentConfig"):
+                try:
+                    config = types.GenerateContentConfig(max_output_tokens=1)
+                except Exception:
+                    config = None
+
+            if config:
+                client.models.generate_content(
+                    model=model_name,
+                    contents="1",
+                    config=config
+                )
+            else:
+                client.models.generate_content(
+                    model=model_name,
+                    contents="1"
+                )
+
+            return {
+                "valid": True,
+                "status": "valid",
+                "client_available": True,
+                "reason": f"API key successfully verified with {model_name}."
+            }
+        except Exception as exc:
+            err_str = str(exc)
+            err_lower = err_str.lower()
+            code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+
+            if _is_model_not_found_error(exc):
+                continue
+
+            if any(term in err_lower for term in ["api key", "invalid_argument", "unauthenticated", "permission_denied", "api_key_invalid", "unauthorized", "forbidden"]) or code in (400, 401, 403):
+                return {
+                    "valid": False,
+                    "status": "invalid_key",
+                    "client_available": False,
+                    "reason": "Invalid or unauthorized Gemini API key."
+                }
+            elif any(term in err_lower for term in ["quota", "resource_exhausted", "rate limit", "429"]) or code == 429:
+                return {
+                    "valid": False,
+                    "status": "quota_exhausted",
+                    "client_available": False,
+                    "reason": "Gemini API quota exhausted or rate limit reached."
+                }
+            elif any(term in err_lower for term in ["connect", "timeout", "network", "dns", "ssl", "unreachable"]):
+                return {
+                    "valid": False,
+                    "status": "network_error",
+                    "client_available": False,
+                    "reason": "Network error while connecting to Gemini API."
+                }
+            else:
+                last_err_status = "error"
+                last_err_msg = err_str
+                break
+
+    return {
+        "valid": False,
+        "status": last_err_status,
+        "client_available": False,
+        "reason": f"API key verification failed: {last_err_msg or 'Could not complete verification call.'}"
+    }
+
+
 DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 CANDIDATE_GEMINI_MODELS = [
     DEFAULT_GEMINI_MODEL,
@@ -471,13 +578,15 @@ Instructions:
 3. On the front, ask a targeted conceptual or problem-solving question requiring active recall.
 4. On the back, provide a thorough, easy-to-understand answer with bullet points, examples, and key takeaways.
 5. In category, specify the topic and slide reference (e.g. "Slide 12: Core Concepts" or "Slide 17: Query Implementation").
+6. Set "slide_number" to the integer slide number (1 to {total_slides}) that this flashcard is based on.
 
 Return a valid JSON array of objects with schema:
 [
   {{
     "front": "Specific concept or targeted question requiring active recall...",
     "back": "Clear, comprehensive answer with key takeaways and explanation...",
-    "category": "Slide reference & topic"
+    "category": "Slide reference & topic",
+    "slide_number": 1
   }}
 ]
 Respond ONLY with the JSON array.
@@ -517,7 +626,8 @@ Respond ONLY with the JSON array.
                 slide_cards.append({
                     "front": q_front,
                     "back": "Key Takeaways:\n" + "\n".join(body_bullets),
-                    "category": f"Slide {num}: {cleaned_title[:28]}"
+                    "category": f"Slide {num}: {cleaned_title[:28]}",
+                    "slide_number": num
                 })
 
             if notes and len(notes) > 15:
@@ -525,7 +635,8 @@ Respond ONLY with the JSON array.
                 slide_cards.append({
                     "front": f"What instructor insight / key note is highlighted for '{cleaned_title}' (Slide {num})?",
                     "back": f"📌 Instructor Note / Key Takeaway:\n{notes}",
-                    "category": f"Slide {num}: Instructor Notes"
+                    "category": f"Slide {num}: Instructor Notes",
+                    "slide_number": num
                 })
 
         # If we have distinct bullet points with term: definition format, create targeted cards
@@ -542,15 +653,23 @@ Respond ONLY with the JSON array.
                         slide_cards.append({
                             "front": f"In '{_clean_slide_title(s.get('title', ''))}' (Slide {num}), what is the definition / purpose of '{term}'?",
                             "back": f"• {term}: {definition}",
-                            "category": f"Slide {num}: {term[:25]}"
+                            "category": f"Slide {num}: {term[:25]}",
+                            "slide_number": num
                         })
 
         cards = slide_cards[:20]
 
-    # Assign stable card_id and index
+    # Assign stable card_id, index, and guaranteed slide_number
     for idx, card in enumerate(cards, start=1):
         card["card_id"] = generate_stable_card_id(card.get("front", f"card_{idx}"))
         card["id"] = idx
+        if "slide_number" not in card or not isinstance(card["slide_number"], int) or card["slide_number"] <= 0:
+            cat = str(card.get("category", ""))
+            m = re.search(r'Slide\s*(\d+)', cat, re.IGNORECASE)
+            if m:
+                card["slide_number"] = int(m.group(1))
+            else:
+                card["slide_number"] = ((idx - 1) % max(1, total_slides)) + 1
 
     return cards
 
@@ -611,6 +730,15 @@ Respond ONLY with valid JSON matching the schema.
             response = _generate_content_with_fallback(client, prompt)
             exam_pack = _extract_json(response.text)
             if isinstance(exam_pack, dict) and "five_mark_questions" in exam_pack:
+                for idx, q in enumerate(exam_pack.get("five_mark_questions", []), start=1):
+                    if "slide_number" not in q:
+                        q["slide_number"] = ((idx - 1) % max(1, total_slides)) + 1
+                for idx, q in enumerate(exam_pack.get("ten_mark_questions", []), start=1):
+                    if "slide_number" not in q:
+                        q["slide_number"] = ((idx - 1) % max(1, total_slides)) + 1
+                for idx, q in enumerate(exam_pack.get("practice_mcqs", []), start=1):
+                    if "slide_number" not in q:
+                        q["slide_number"] = ((idx - 1) % max(1, total_slides)) + 1
                 exam_pack["quiz"] = exam_pack.get("practice_mcqs", [])
                 return exam_pack
         except Exception as e:
@@ -652,7 +780,8 @@ Respond ONLY with valid JSON matching the schema.
                 ],
                 "model_answer": "\n\n".join(model_ans_parts),
                 "analogy": f"💡 **Key Concept Hook:** Focus on the input parameters and constraints defined for '{clean_t}' before formulating the final solution.",
-                "exam_trap": f"⚠️ **Exam Trap:** Do not omit prerequisite conditions or syntax constraints specified for '{clean_t}'."
+                "exam_trap": f"⚠️ **Exam Trap:** Do not omit prerequisite conditions or syntax constraints specified for '{clean_t}'.",
+                "slide_number": snum
             })
 
     selected_five_mark = _sample_across_deck(five_mark_pool, min(6, len(five_mark_pool))) if five_mark_pool else []
@@ -704,7 +833,8 @@ Respond ONLY with valid JSON matching the schema.
                 "parts": parts,
                 "model_answer": f"Integrated model answer covering foundational principles of {t1}, operational workflow of {t2}, and system resilience.",
                 "marking_rubric": "Part A (3.5 Marks): Core principles; Part B (3.5 Marks): Implementation details; Part C (3.0 Marks): Robustness & failure modes.",
-                "examiner_tips": "💡 Relate theoretical slide concepts directly to practical constraints and problem scenarios."
+                "examiner_tips": "💡 Relate theoretical slide concepts directly to practical constraints and problem scenarios.",
+                "slide_number": s1["slide_number"]
             })
 
     selected_ten_mark = ten_mark_pool[:3] if ten_mark_pool else []
@@ -766,7 +896,8 @@ Return a valid JSON array of question objects:
     "answer_index": 0,
     "explanation": "Detailed solution breakdown with mechanism explanations.",
     "difficulty": "{difficulty}",
-    "topic": "{topic or 'Core Concepts'}"
+    "topic": "{topic or 'Core Concepts'}",
+    "slide_number": 1
   }}
 ]
 Respond ONLY with the JSON array.
@@ -775,13 +906,15 @@ Respond ONLY with the JSON array.
             response = _generate_content_with_fallback(client, prompt)
             exam_q = _extract_json(response.text)
             if isinstance(exam_q, list) and len(exam_q) > 0:
-                for q in exam_q:
+                for idx, q in enumerate(exam_q, start=1):
                     opts = q.get("options", [])
                     corr_idx = q.get("answer_index", 0)
                     if opts and 0 <= corr_idx < len(opts):
                         corr_opt = opts[corr_idx]
                         random.shuffle(opts)
                         q["answer_index"] = opts.index(corr_opt)
+                    if "slide_number" not in q or not isinstance(q["slide_number"], int) or q["slide_number"] <= 0:
+                        q["slide_number"] = ((idx - 1) % max(1, total_slides)) + 1
                 return exam_q[:question_count]
         except Exception as e:
             logger.warning(f"Gemini API Quiz Master error ({str(e)}). Falling back to smart local exam generation across full deck.")
@@ -841,7 +974,8 @@ Respond ONLY with the JSON array.
             "answer_index": corr_idx,
             "explanation": exp,
             "difficulty": difficulty,
-            "topic": clean_title[:40]
+            "topic": clean_title[:40],
+            "slide_number": snum
         })
 
     return exam_q[:question_count]
@@ -868,6 +1002,7 @@ def answer_study_chat(
 
     mode_personas = {
         "tutor": "You are Claude / ChatGPT acting as an exceptional, warm, intellectually rigorous professor and private tutor. Break complex ideas down with crystal clarity, everyday analogies, and clear logical progressions.",
+        "socratic": "You are the Socratic Sage - a thoughtful, philosophical mentor who guides students to uncover truths for themselves through reflective questions, counter-examples, and guided inquiry.",
         "eli5": "You are a warm, imaginative teacher explaining complex technical concepts to a curious beginner. Use vivid, delightful real-world metaphors and simple, jargon-free explanations.",
         "quiz_me": "You are an engaging Socratic examiner. Present a realistic scenario-based challenge question to test the student's conceptual intuition, then guide them to the answer.",
         "notes_deepdive": "You are an expert focusing on the presenter's hidden speaker notes and annotations. Unpack the unspoken test hints, architectural rationale, and edge cases the instructor highlighted."
@@ -1057,3 +1192,148 @@ Voice & Tone Guidelines:
         f"What would you like to explore?"
     )
     return res, new_memory
+
+
+def generate_follow_up_chips(reply: str, user_message: str, ppt_data: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Generates 3 contextual suggested follow-up question chips for the student to tap."""
+    chips = []
+    r_lower = (reply or "").lower()
+    u_lower = (user_message or "").lower()
+
+    m = re.search(r'slide\s*(\d+)', r_lower + " " + u_lower)
+    slide_num = m.group(1) if m else None
+
+    if slide_num:
+        chips.append(f"What hidden test clues or notes are in Slide {slide_num}?")
+        chips.append(f"Give me an everyday real-world analogy for Slide {slide_num}.")
+        chips.append(f"Quiz me on Slide {slide_num} with a scenario problem.")
+    else:
+        if any(w in r_lower for w in ["formula", "algorithm", "step", "method", "process"]):
+            chips.append("Can you walk through a concrete step-by-step example?")
+            chips.append("What common mistake do students make on this in exams?")
+            chips.append("How does this compare to alternative approaches?")
+        elif "why" in u_lower or "explain" in u_lower:
+            chips.append("Can you explain this with a simple real-world analogy?")
+            chips.append("Quiz me on this concept with a challenging question.")
+            chips.append("What are the key speaker notes or hidden hints?")
+        else:
+            chips.append("Can you give me a real-world example of this?")
+            chips.append("How would an examiner test me on this?")
+            chips.append("Teach this back to me using the Feynman Technique.")
+
+    return chips[:3]
+
+
+def evaluate_feynman_explanation(
+    concept: str,
+    explanation: str,
+    ppt_data: Dict[str, Any],
+    slide_number: Optional[int] = None,
+    api_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Evaluates a student's explanation using the Feynman Technique.
+    Scores clarity (0-100), identifies strengths, missing concepts, misconceptions, and provides mentor feedback.
+    """
+    digest = ppt_data.get("full_digest", "")
+    slides = ppt_data.get("slides", [])
+    slide_context = ""
+    if slide_number and 1 <= slide_number <= len(slides):
+        s = slides[slide_number - 1]
+        slide_context = s.get("raw_text", "")
+    elif slides:
+        slide_context = slides[0].get("raw_text", "")
+
+    client = _get_genai_client(api_key)
+    if client:
+        prompt = f"""You are Richard Feynman - Nobel laureate physicist and legendary educator.
+A student is using the Feynman Technique to demonstrate their understanding of a concept by explaining it in plain English.
+
+Target Concept: {concept}
+Relevant Slide Context:
+{slide_context[:2000]}
+
+General Document Context:
+{digest[:3000]}
+
+Student's Explanation:
+"{explanation}"
+
+Analyze the student's explanation carefully:
+1. clarity_score: Integer from 0 to 100 based on simplicity, accuracy, intuitive analogies, and freedom from unearned jargon.
+2. strengths: List of 2 to 4 bullet points highlighting what the student explained accurately and intuitively.
+3. missing_concepts: List of 1 to 3 important nuances or components the student left out.
+4. misconceptions: List of any errors, fallacies, or false assumptions (empty list [] if none).
+5. simplified_analogy: A brilliant everyday analogy illustrating this concept.
+6. feedback: 2-3 sentences of warm, encouraging mentor feedback in Richard Feynman's authentic enthusiastic voice.
+
+Return ONLY a valid JSON object matching this schema:
+{{
+  "clarity_score": 85,
+  "strengths": ["...", "..."],
+  "missing_concepts": ["..."],
+  "misconceptions": [],
+  "simplified_analogy": "...",
+  "feedback": "..."
+}}
+"""
+        try:
+            response = _generate_content_with_fallback(client, prompt)
+            parsed = _extract_json(response.text)
+            if isinstance(parsed, dict) and "clarity_score" in parsed:
+                score = max(0, min(100, int(parsed.get("clarity_score", 70))))
+                parsed["clarity_score"] = score
+                parsed["strengths"] = parsed.get("strengths") or ["Good start explaining the core idea."]
+                parsed["missing_concepts"] = parsed.get("missing_concepts") or ["Consider elaborating on edge cases."]
+                parsed["misconceptions"] = parsed.get("misconceptions") or []
+                parsed["simplified_analogy"] = parsed.get("simplified_analogy") or f"Think of {concept} as a well-orchestrated process."
+                parsed["feedback"] = parsed.get("feedback") or "Keep explaining things simply—that's the true mark of mastery!"
+                return parsed
+        except Exception as e:
+            logger.warning(f"Feynman evaluation Gemini error: {str(e)}. Falling back to local rubric engine.")
+
+    # Smart local rubric engine
+    words = [w.lower().strip(",.!?") for w in explanation.split() if len(w.strip()) > 0]
+    word_count = len(words)
+
+    slide_words = set(re.findall(r'\b[a-zA-Z]{4,}\b', slide_context.lower()))
+
+    matched_slide_words = [w for w in set(words) if w in slide_words]
+    explanatory_markers = ["because", "means", "works", "example", "like", "when", "allows", "instead", "think"]
+    matched_markers = [m for m in explanatory_markers if m in words]
+
+    base_score = 50
+    if word_count >= 20:
+        base_score += 15
+    if word_count >= 50:
+        base_score += 10
+    if len(matched_slide_words) >= 3:
+        base_score += 15
+    if len(matched_markers) >= 2:
+        base_score += 10
+
+    clarity_score = min(95, max(35, base_score))
+
+    strengths = [
+        f"You explained '{concept}' using your own active phrasing.",
+        f"Used explanatory indicators ({', '.join(matched_markers[:2]) if matched_markers else 'clear prose'}) to build intuition."
+    ]
+    if len(matched_slide_words) >= 2:
+        strengths.append(f"Connected key terminology: {', '.join(matched_slide_words[:3])}.")
+
+    missing = []
+    if word_count < 30:
+        missing.append("Explanation is somewhat brief; try walking through a concrete step-by-step example.")
+    if len(matched_slide_words) < 2:
+        missing.append("Include more specific details regarding how the mechanism interacts with other components.")
+    if not missing:
+        missing.append("Consider explaining what happens in failure or edge-case conditions.")
+
+    return {
+        "clarity_score": clarity_score,
+        "strengths": strengths,
+        "missing_concepts": missing,
+        "misconceptions": [],
+        "simplified_analogy": f"Think of {concept} like a relay race: every step has a clear handoff and purpose.",
+        "feedback": f"Feynman once said, 'If you can't explain it simply, you don't understand it well enough.' You scored {clarity_score}/100 on clarity—solid effort!"
+    }
