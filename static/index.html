@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PPT & PDF Extractor & ChatGPT AI Teacher Assistant</title>
-    <link rel="stylesheet" href="/static/style.css?v=dark_claude_v3">
+    <title>PPT & PDF Extractor & AI Study Assistant</title>
+    <link rel="stylesheet" href="/static/style.css?v=claude_official_v4">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
@@ -24,9 +24,6 @@
             </div>
 
             <div class="navbar-actions">
-                <button id="sampleDemoBtn" class="btn btn-secondary" style="font-size: 13px;" aria-label="Try Sample Demo Presentation">
-                    <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Try Sample Demo
-                </button>
                 <div class="api-key-container">
                     <i class="fa-solid fa-key key-icon" aria-hidden="true"></i>
                     <input type="password" id="apiKeyInput" placeholder="Gemini API Key (Optional)" aria-label="Gemini API Key" />
@@ -61,9 +58,6 @@
                     <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
                         <button class="btn btn-primary btn-large" onclick="document.getElementById('fileInput').click()">
                             <i class="fa-solid fa-folder-open" aria-hidden="true"></i> Choose File(s) (.pptx / .ppt / .pdf)
-                        </button>
-                        <button class="btn btn-secondary btn-large" id="heroSampleBtn">
-                            <i class="fa-solid fa-bolt" aria-hidden="true"></i> Try Sample Demo
                         </button>
                     </div>
                     <span class="file-hint">Supports multiple .pptx and .pdf files (up to 50 MB each) with full speaker notes parsing</span>
@@ -281,20 +275,20 @@
                             </div>
 
                             <!-- Claude-style Prompt Starters / Suggestions -->
-                            <div class="claude-suggestions-container">
+                            <div class="claude-suggestions-container" id="claudeSuggestionsContainer">
                                 <span class="claude-suggestion-label"><i class="fa-regular fa-lightbulb"></i> Suggested:</span>
-                                <div class="claude-chips-scroll">
-                                    <button class="claude-chip" onclick="sendSuggestedQuestion('Explain the Gossip Protocol and how nodes propagate data like a rumor.')">
-                                        <span>🗣️ Gossip Protocol & Rumor Spreading</span>
+                                <div class="claude-chips-scroll" id="claudeChipsScroll">
+                                    <button class="claude-chip" onclick="sendSuggestedQuestion('Summarize the big picture and key takeaways across the entire presentation.')">
+                                        <span>💡 Master Takeaways & Big Picture</span>
                                     </button>
-                                    <button class="claude-chip" onclick="sendSuggestedQuestion('Teach me Slide 18: Availability and Fault Tolerance with a real-world analogy.')">
-                                        <span>🛡️ Slide 18: Fault Tolerance</span>
+                                    <button class="claude-chip" onclick="sendSuggestedQuestion('Explain the core concepts and mechanisms using simple everyday analogies.')">
+                                        <span>🌟 Intuitive Real-World Analogies</span>
                                     </button>
-                                    <button class="claude-chip" onclick="sendSuggestedQuestion('What are the most crucial key takeaways and definitions across all slides?')">
-                                        <span>💡 Master Takeaways</span>
+                                    <button class="claude-chip" onclick="sendSuggestedQuestion('What are the most crucial presenter notes and instructor test hints?')">
+                                        <span>📌 Presenter Notes & Test Clues</span>
                                     </button>
-                                    <button class="claude-chip" onclick="sendSuggestedQuestion('How does a 51% Attack work and what can the attacker actually do?')">
-                                        <span>⚡ 51% Attack Mechanics</span>
+                                    <button class="claude-chip" onclick="sendSuggestedQuestion('Quiz me with 3 challenging conceptual questions to test my recall.')">
+                                        <span>🎯 Socratic Recall Challenge</span>
                                     </button>
                                 </div>
                             </div>

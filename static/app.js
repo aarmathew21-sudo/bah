@@ -8,7 +8,6 @@ let chatHistory = [];
 document.addEventListener('DOMContentLoaded', () => {
     initApiKey();
     initFileUpload();
-    initSampleDemo();
     initExportText();
     initSearch();
     initTabs();
@@ -100,6 +99,7 @@ async function checkCurrentSession() {
             updateWorkspaceHeader(data);
             renderDocFilterBar(data.documents, data.filenames);
             renderSlides(data.slides);
+            updateChatSuggestions(data.slides);
 
             document.getElementById('uploadSection').classList.add('hidden');
             document.getElementById('workspaceSection').classList.remove('hidden');
@@ -172,52 +172,72 @@ function getApiKey() {
     return localStorage.getItem('gemini_api_key') || null;
 }
 
-// Sample Demo Handler
-function initSampleDemo() {
-    const btn1 = document.getElementById('sampleDemoBtn');
-    const btn2 = document.getElementById('heroSampleBtn');
+// Dynamic Contextual Suggestions Generator based on Document
+function updateChatSuggestions(slides) {
+    const chipsContainer = document.getElementById('claudeChipsScroll');
+    if (!chipsContainer) return;
 
-    [btn1, btn2].forEach(btn => {
-        if (btn) {
-            btn.addEventListener('click', loadSampleDemo);
-        }
-    });
-}
-
-async function loadSampleDemo() {
-    hideError();
-    const uploadSection = document.getElementById('uploadSection');
-    const loadingOverlay = document.getElementById('loadingOverlay');
-    const workspaceSection = document.getElementById('workspaceSection');
-
-    uploadSection.classList.add('hidden');
-    loadingOverlay.classList.remove('hidden');
-
-    try {
-        const response = await fetch('/api/sample', { method: 'POST' });
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.detail || 'Failed to load sample demo');
-        }
-
-        const data = await response.json();
-        presentationData = data;
-
-        renderSlides(data.slides);
-        document.getElementById('loadedFileName').textContent = data.filename;
-        document.getElementById('slideCountBadge').textContent = `${data.total_slides} Slides/Pages Extracted`;
-        document.getElementById('tabSlideCount').textContent = data.total_slides;
-        const chatStatus = document.getElementById('chatContextStatus');
-        if (chatStatus) chatStatus.textContent = `Ready • ${data.total_slides} slides & presenter notes in memory`;
-
-        loadingOverlay.classList.add('hidden');
-        workspaceSection.classList.remove('hidden');
-
-    } catch (err) {
-        showError('Error loading sample presentation: ' + err.message);
-        loadingOverlay.classList.add('hidden');
-        uploadSection.classList.remove('hidden');
+    if (!slides || slides.length === 0) {
+        chipsContainer.innerHTML = `
+            <button class="claude-chip" onclick="sendSuggestedQuestion('Summarize the big picture and key takeaways across the entire presentation.')">
+                <span>💡 Master Takeaways & Big Picture</span>
+            </button>
+            <button class="claude-chip" onclick="sendSuggestedQuestion('Explain the core concepts and mechanisms using simple everyday analogies.')">
+                <span>🌟 Intuitive Real-World Analogies</span>
+            </button>
+            <button class="claude-chip" onclick="sendSuggestedQuestion('What are the most crucial presenter notes and instructor test hints?')">
+                <span>📌 Presenter Notes & Test Clues</span>
+            </button>
+            <button class="claude-chip" onclick="sendSuggestedQuestion('Quiz me with 3 challenging conceptual questions to test my recall.')">
+                <span>🎯 Socratic Recall Challenge</span>
+            </button>
+        `;
+        return;
     }
+
+    const chips = [];
+    chips.push({
+        text: 'Summarize the big picture and key takeaways across the entire presentation.',
+        label: '💡 Master Takeaways & Overview'
+    });
+
+    const candidateSlides = slides.filter(s => s.title && s.title.trim().length > 3 && !s.title.toLowerCase().startsWith('slide '));
+    const samplePool = candidateSlides.length > 0 ? candidateSlides : slides;
+
+    // Pick up to 2 distinct topics/slides
+    const picked = samplePool.slice(0, 3);
+    picked.forEach(s => {
+        const sNum = s.slide_number || 1;
+        const cleanTitle = s.title.replace(/["']/g, '');
+        chips.push({
+            text: `Teach me Slide ${sNum}: ${cleanTitle} step-by-step with an everyday analogy.`,
+            label: `📖 Slide ${sNum}: ${cleanTitle.length > 25 ? cleanTitle.slice(0, 22) + '...' : cleanTitle}`
+        });
+    });
+
+    const notesSlide = slides.find(s => s.speaker_notes && s.speaker_notes.trim().length > 10);
+    if (notesSlide) {
+        chips.push({
+            text: 'What hidden insights, exam warnings, or test hints are in the presenter notes?',
+            label: '📌 Presenter Notes & Test Hints'
+        });
+    } else {
+        chips.push({
+            text: 'Explain the most complex mechanism in these slides with a simple mental model.',
+            label: '🌟 Intuitive Everyday Analogy'
+        });
+    }
+
+    chips.push({
+        text: 'Quiz me on the main concepts from these documents to test my recall.',
+        label: '🎯 Socratic Recall Challenge'
+    });
+
+    chipsContainer.innerHTML = chips.map(c => `
+        <button class="claude-chip" onclick="sendSuggestedQuestion('${escapeHtml(c.text).replace(/'/g, "\\'")}')">
+            <span>${escapeHtml(c.label)}</span>
+        </button>
+    `).join('');
 }
 
 // Export Handlers (.txt and .json)
@@ -364,9 +384,46 @@ async function handleFileUpload(files, mode = 'replace') {
         presentationData = data;
         currentDocFilter = 'ALL';
 
+        if (mode === 'replace') {
+            // Reset downstream study tabs so stale data from old presentations isn't displayed
+            const summaryContainer = document.getElementById('summaryContainer');
+            if (summaryContainer) {
+                summaryContainer.innerHTML = `
+                    <div class="placeholder-state">
+                        <i class="fa-solid fa-book-open placeholder-icon" aria-hidden="true"></i>
+                        <p>Click below to generate an intuitive study guide from your slides & presenter notes.</p>
+                        <button class="btn btn-primary" onclick="loadStudySummary()">Generate Study Guide</button>
+                    </div>`;
+            }
+
+            const flashcardsContainer = document.getElementById('flashcardsContainer');
+            if (flashcardsContainer) {
+                flashcardsContainer.innerHTML = `
+                    <div class="placeholder-state">
+                        <i class="fa-solid fa-clone placeholder-icon" aria-hidden="true"></i>
+                        <p>Ready to practice active recall? Generate flashcards with SM-2 review scheduling.</p>
+                        <button class="btn btn-primary" onclick="loadFlashcards()">Generate Flashcards</button>
+                    </div>`;
+            }
+
+            const quizContainer = document.getElementById('quizContainer');
+            if (quizContainer) {
+                quizContainer.innerHTML = `
+                    <div class="placeholder-state">
+                        <i class="fa-solid fa-graduation-cap placeholder-icon" aria-hidden="true"></i>
+                        <p>Ready for exam prep? Generate authentic 5-mark and 10-mark questions with marking schemes.</p>
+                        <button class="btn btn-primary" onclick="loadQuiz()">Generate Exam Pack</button>
+                    </div>`;
+            }
+
+            // Reset chat history and memory
+            chatHistory = [];
+        }
+
         updateWorkspaceHeader(data);
         renderDocFilterBar(data.documents, data.filenames);
         renderSlides(data.slides);
+        updateChatSuggestions(data.slides);
 
         loadingOverlay.classList.add('hidden');
         workspaceSection.classList.remove('hidden');

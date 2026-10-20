@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude.ai Complete Color System & Design Token Swatches</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #FAF9F5;
+            --surface: #FFFFFF;
+            --surface-subtle: #F5F2EB;
+            --border: #E8E2D8;
+            --text-primary: #1F1E1D;
+            --text-secondary: #66635B;
+            --brand: #CC5A37;
+        }
+
+        [data-theme="dark"] {
+            --bg: #1F1E1D;
+            --surface: #262523;
+            --surface-subtle: #181716;
+            --border: #383632;
+            --text-primary: #ECEBE7;
+            --text-secondary: #A6A29A;
+            --brand: #D97757;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-primary);
+            padding: 40px 24px;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 36px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .title-group h1 {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            margin-bottom: 6px;
+        }
+
+        .title-group p {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .theme-toggle-btn {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            transition: all 0.15s ease;
+        }
+
+        .theme-toggle-btn:hover {
+            border-color: var(--brand);
+            color: var(--brand);
+        }
+
+        .section-block {
+            margin-bottom: 48px;
+        }
+
+        .section-block h2 {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-block p.desc {
+            font-size: 13.5px;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+        }
+
+        .swatch-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+            gap: 16px;
+        }
+
+        .swatch-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .swatch-color-box {
+            height: 84px;
+            width: 100%;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+            position: relative;
+        }
+
+        .swatch-info {
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .swatch-name {
+            font-size: 13.5px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .swatch-role {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+        }
+
+        .swatch-hex {
+            font-family: 'JetBrains Mono', Consolas, monospace;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--brand);
+            margin-top: 4px;
+        }
+
+        .swatch-hsl {
+            font-family: 'JetBrains Mono', Consolas, monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            font-size: 13px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+
+        .comparison-table th, .comparison-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+        }
+
+        .comparison-table th {
+            background: var(--surface-subtle);
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .color-pill-preview {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'JetBrains Mono', Consolas, monospace;
+            font-size: 12px;
+        }
+
+        .color-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 4px;
+            border: 1px solid rgba(0,0,0,0.15);
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="title-group">
+                <h1>Anthropic Claude.ai Design Token Swatches</h1>
+                <p>Complete extracted color architecture for Light & Dark mode inspection</p>
+            </div>
+            <button class="theme-toggle-btn" onclick="toggleTheme()">🌓 Toggle Dark / Light Theme</button>
+        </header>
+
+        <!-- 1. Brand Accents -->
+        <section class="section-block">
+            <h2>1. Brand Terracotta / Coral Tokens</h2>
+            <p class="desc">Anthropic signature warmth applied to primary actions, active tabs, focus indicators, and logo marks.</p>
+            <div class="swatch-grid">
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #CC5A37;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">Brand Terracotta (Light)</span>
+                        <span class="swatch-role">Primary Action / Send Button</span>
+                        <span class="swatch-hex">#CC5A37</span>
+                        <span class="swatch-hsl">hsl(14, 58%, 51%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #B54D2D;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">Brand Hover (Light)</span>
+                        <span class="swatch-role">Interactive Hover State</span>
+                        <span class="swatch-hex">#B54D2D</span>
+                        <span class="swatch-hsl">hsl(14, 60%, 44%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #FBF2ED;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">Brand Subtle Tint</span>
+                        <span class="swatch-role">Active Pill / Selection Tint</span>
+                        <span class="swatch-hex">#FBF2ED</span>
+                        <span class="swatch-hsl">hsl(22, 67%, 96%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #D97757;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">Brand Terracotta (Dark)</span>
+                        <span class="swatch-role">High Contrast Action (Dark)</span>
+                        <span class="swatch-hex">#D97757</span>
+                        <span class="swatch-hsl">hsl(15, 63%, 60%)</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. Light Neutral Surfaces & Texts -->
+        <section class="section-block">
+            <h2>2. Light Mode Neutral Surface Scale</h2>
+            <p class="desc">Parchment-inspired warm tones designed to mimic paper and reduce eye fatigue.</p>
+            <div class="swatch-grid">
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #FAF9F5; border: 1px solid #E8E2D8;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--bg-000 / Canvas Base</span>
+                        <span class="swatch-role">Main App & Chat Background</span>
+                        <span class="swatch-hex">#FAF9F5</span>
+                        <span class="swatch-hsl">hsl(48, 33.3%, 97.1%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #FFFFFF; border: 1px solid #E8E2D8;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--bg-card / Elevated</span>
+                        <span class="swatch-role">Cards, Modals & Composer</span>
+                        <span class="swatch-hex">#FFFFFF</span>
+                        <span class="swatch-hsl">hsl(0, 0%, 100%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #F5F2EB; border: 1px solid #E8E2D8;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--bg-100 / Subtle Surface</span>
+                        <span class="swatch-role">Sidebar & User Msg Bubble</span>
+                        <span class="swatch-hex">#F5F2EB</span>
+                        <span class="swatch-hsl">hsl(53, 28.6%, 94.5%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #ECE8DF; border: 1px solid #E8E2D8;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--bg-200 / Active Hover</span>
+                        <span class="swatch-role">Item Hover & Active Controls</span>
+                        <span class="swatch-hex">#ECE8DF</span>
+                        <span class="swatch-hsl">hsl(48, 25%, 92.2%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #E8E2D8;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--border-100 / Subtle Border</span>
+                        <span class="swatch-role">Dividers & Subtle Borders</span>
+                        <span class="swatch-hex">#E8E2D8</span>
+                        <span class="swatch-hsl">hsl(50, 20.7%, 88.6%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #1F1E1D;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--text-000 / Text Primary</span>
+                        <span class="swatch-role">High Contrast Typography</span>
+                        <span class="swatch-hex">#1F1E1D</span>
+                        <span class="swatch-hsl">hsl(60, 2.6%, 7.6%)</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. Dark Neutral Surfaces & Texts -->
+        <section class="section-block">
+            <h2>3. Dark Mode Neutral Surface Scale</h2>
+            <p class="desc">Deep warm charcoal tones (avoiding cold blues) for comfortable reading in low ambient light.</p>
+            <div class="swatch-grid">
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #1F1E1D;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--bg-000 (Dark) / Canvas</span>
+                        <span class="swatch-role">Dark App Background</span>
+                        <span class="swatch-hex">#1F1E1D</span>
+                        <span class="swatch-hsl">hsl(60, 2.1%, 18.4%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #181716;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--bg-100 (Dark) / Recessed</span>
+                        <span class="swatch-role">Sidebar & Deeper Surface</span>
+                        <span class="swatch-hex">#181716</span>
+                        <span class="swatch-hsl">hsl(60, 2.7%, 14.5%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #262523;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--bg-card (Dark) / Elevated</span>
+                        <span class="swatch-role">Cards & Composer Box</span>
+                        <span class="swatch-hex">#262523</span>
+                        <span class="swatch-hsl">hsl(30, 3.3%, 11.8%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #2E2D2A;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--bg-200 (Dark) / User Msg</span>
+                        <span class="swatch-role">User Chat Bubble & Popovers</span>
+                        <span class="swatch-hex">#2E2D2A</span>
+                        <span class="swatch-hsl">hsl(45, 5%, 17%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #383632;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--border-100 (Dark) / Border</span>
+                        <span class="swatch-role">Dark Dividers & Outlines</span>
+                        <span class="swatch-hex">#383632</span>
+                        <span class="swatch-hsl">hsl(40, 5.7%, 20.8%)</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #ECEBE7;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">--text-000 (Dark) / Text</span>
+                        <span class="swatch-role">High Contrast Light Text</span>
+                        <span class="swatch-hex">#ECEBE7</span>
+                        <span class="swatch-hsl">hsl(48, 12%, 92%)</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. Syntax & Semantic Highlights -->
+        <section class="section-block">
+            <h2>4. Code Syntax & Semantic Tokens</h2>
+            <p class="desc">High-legibility syntax tokens calibrated against Claude's warm code surfaces.</p>
+            <div class="swatch-grid">
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #A14325;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">Syntax Keyword (Light)</span>
+                        <span class="swatch-role">Keywords, Imports, Logic</span>
+                        <span class="swatch-hex">#A14325</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #3E6F58;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">Syntax String (Light)</span>
+                        <span class="swatch-role">Strings, Regex</span>
+                        <span class="swatch-hex">#3E6F58</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #2A5C8A;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">Syntax Function (Light)</span>
+                        <span class="swatch-role">Methods, Function Calls</span>
+                        <span class="swatch-hex">#2A5C8A</span>
+                    </div>
+                </div>
+                <div class="swatch-card">
+                    <div class="swatch-color-box" style="background-color: #8C531B;"></div>
+                    <div class="swatch-info">
+                        <span class="swatch-name">Syntax Constant (Light)</span>
+                        <span class="swatch-role">Numbers, Booleans</span>
+                        <span class="swatch-hex">#8C531B</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <script>
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme');
+            if (current === 'dark') {
+                document.documentElement.removeAttribute('data-theme');
+            } else {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        }
+    </script>
+</body>
+</html>
