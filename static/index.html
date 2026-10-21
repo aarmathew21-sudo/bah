@@ -24,6 +24,12 @@
             </div>
 
             <div class="navbar-actions">
+                <button id="soundToggleBtn" class="btn btn-outline sound-toggle-btn" title="Toggle Sound FX (Web Audio API)" aria-label="Toggle sound effects">
+                    <i class="fa-solid fa-volume-xmark" id="soundIcon" aria-hidden="true"></i> <span id="soundText">Sound: OFF</span>
+                </button>
+                <button id="finishSessionBtn" class="btn btn-outline finish-session-btn" title="Finish study session and review stats" aria-label="Finish study session">
+                    <i class="fa-solid fa-flag-checkered" aria-hidden="true"></i> <span>Finish Session</span>
+                </button>
                 <div class="api-key-container">
                     <i class="fa-solid fa-key key-icon" aria-hidden="true"></i>
                     <input type="password" id="apiKeyInput" placeholder="Gemini API Key (Optional)" aria-label="Gemini API Key" />
@@ -64,15 +70,52 @@
                 </div>
             </section>
 
-            <!-- Loading Spinner -->
+            <!-- Loading Spinner & Staged Extraction Reveal -->
             <div id="loadingOverlay" class="loading-overlay hidden" aria-live="polite">
-                <div class="spinner"></div>
-                <p id="loadingText">Extracting text, pages, and notes...</p>
+                <div class="reveal-card">
+                    <div class="spinner"></div>
+                    <h3 id="loadingTitle">Reading Presentation & Notes...</h3>
+                    <p id="loadingText">Extracting text, pages, tables, and presenter annotations...</p>
+                    <div class="staged-steps-list" id="stagedStepsList">
+                        <div class="stage-step" id="step1"><i class="fa-solid fa-circle-notch fa-spin"></i> Inspecting file integrity & security</div>
+                        <div class="stage-step pending" id="step2"><i class="fa-regular fa-circle"></i> Parsing slides, layout & XML structures</div>
+                        <div class="stage-step pending" id="step3"><i class="fa-regular fa-circle"></i> Scanning speaker notes & embedded tables</div>
+                        <div class="stage-step pending" id="step4"><i class="fa-regular fa-circle"></i> Initializing Today's Mission & Mastery Map</div>
+                    </div>
+                </div>
             </div>
 
             <!-- Workspace Section (Hidden until file is loaded) -->
             <div id="workspaceSection" class="workspace-section hidden">
                 
+                <!-- "TODAY'S MISSION" HOME PANEL -->
+                <div id="todaysMissionCard" class="mission-card" role="region" aria-label="Today's Study Mission">
+                    <div class="mission-header">
+                        <div class="mission-streak-badge" title="Consecutive days studied">
+                            <span class="flame-icon">🔥</span>
+                            <span id="missionStreakDays">1</span> Day Streak
+                        </div>
+                        <div class="mission-level-container">
+                            <span id="missionLevelBadge" class="level-badge">🌱 Novice</span>
+                            <div class="mission-xp-track" title="XP Progress to next rank">
+                                <div id="missionXpBarFill" class="mission-xp-fill" style="width: 0%;"></div>
+                            </div>
+                            <span id="missionXpText" class="mission-xp-text">0 / 100 XP</span>
+                        </div>
+                    </div>
+
+                    <div class="mission-body">
+                        <div class="mission-info">
+                            <span class="mission-label">🎯 TODAY'S MISSION</span>
+                            <h2 id="missionTitle">Review Due Flashcards</h2>
+                            <p id="missionSubtitle">12 cards due · Weak spot: Slide 7 · Daily goal 20 XP</p>
+                        </div>
+                        <button id="startMissionBtn" class="btn btn-primary btn-large mission-action-btn" aria-label="Start mission">
+                            <span id="startMissionBtnText">Start Mission</span> <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- File Summary Bar -->
                 <div class="file-bar">
                     <div class="file-info">
@@ -82,6 +125,7 @@
                             <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px;">
                                 <span id="slideCountBadge" class="slide-count">0 Slides / Pages Extracted</span>
                                 <span id="docCountBadge" class="doc-badge-count">1 Document</span>
+                                <span id="uploadWarningBadge" class="warning-badge hidden"><i class="fa-solid fa-triangle-exclamation"></i> Warnings Detected</span>
                             </div>
                             <div id="documentPillsContainer" class="doc-pills-row"></div>
                         </div>
@@ -105,54 +149,153 @@
                 <!-- Navigation Tabs -->
                 <nav class="tabs-nav" role="tablist" aria-label="Study Hub Navigation">
                     <button class="tab-btn active" data-tab="slidesTab" role="tab" aria-selected="true" id="tab-slides">
-                        <i class="fa-solid fa-layer-group" aria-hidden="true"></i> Content & Notes (<span id="tabSlideCount">0</span>)
+                        <i class="fa-solid fa-chess-board" aria-hidden="true"></i> Mastery Map (<span id="tabSlideCount">0</span>)
                     </button>
                     <button class="tab-btn" data-tab="summaryTab" role="tab" aria-selected="false" id="tab-summary">
                         <i class="fa-solid fa-book-open" aria-hidden="true"></i> Study Guide
                     </button>
                     <button class="tab-btn" data-tab="flashcardsTab" role="tab" aria-selected="false" id="tab-flashcards">
-                        <i class="fa-solid fa-clone" aria-hidden="true"></i> SM-2 Flashcards
+                        <i class="fa-solid fa-clone" aria-hidden="true"></i> Deck Run (SM-2)
                     </button>
                     <button class="tab-btn" data-tab="quizTab" role="tab" aria-selected="false" id="tab-quiz">
-                        <i class="fa-solid fa-graduation-cap" aria-hidden="true"></i> 🎓 Exam Prep (5 & 10 Marks)
+                        <i class="fa-solid fa-graduation-cap" aria-hidden="true"></i> Exam Prep (5 & 10M)
                     </button>
                     <button class="tab-btn" data-tab="chatTab" role="tab" aria-selected="false" id="tab-chat">
-                        <i class="fa-solid fa-robot" aria-hidden="true"></i> ChatGPT AI Teacher
+                        <i class="fa-solid fa-user-graduate" aria-hidden="true"></i> AI Tutor & Feynman
                     </button>
                     <button class="tab-btn" data-tab="quizmasterTab" role="tab" aria-selected="false" id="tab-quizmaster">
-                        <i class="fa-solid fa-trophy" aria-hidden="true"></i> 🏆 Quiz Master Hub
+                        <i class="fa-solid fa-dragon" aria-hidden="true"></i> Boss Battle Hub
                     </button>
                 </nav>
 
                 <!-- Tab Panels -->
                 <div class="tab-content">
 
-                    <!-- 1. SLIDES & SPEAKER NOTES TAB -->
+                    <!-- 1. MASTERY MAP & SLIDES TAB -->
                     <div id="slidesTab" class="tab-panel active" role="tabpanel" aria-labelledby="tab-slides">
                         <div class="panel-header flex-between">
                             <div>
-                                <h2><i class="fa-solid fa-align-left" aria-hidden="true"></i> Extracted Document Pages / Slides</h2>
-                                <p class="panel-subtitle">All text, lists, tables, and speaker/PDF notes across your documents.</p>
+                                <h2><i class="fa-solid fa-chess-board" aria-hidden="true"></i> Knowledge Mastery Map</h2>
+                                <p class="panel-subtitle">Every slide is a territory. Review flashcards and answer quizzes to claim 100% mastery.</p>
                             </div>
-                            <div class="search-box">
-                                <input type="text" id="slideSearchInput" placeholder="Search pages, slides or notes..." aria-label="Search content or notes" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px;" />
+                            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                <div class="view-switch-group">
+                                    <button id="viewMasteryMapBtn" class="btn btn-primary btn-sm active" title="Show Mastery Map Grid" aria-label="Mastery Map View">
+                                        <i class="fa-solid fa-chess-board"></i> Mastery Map
+                                    </button>
+                                    <button id="viewDocListBtn" class="btn btn-outline btn-sm" title="Show Document Content List" aria-label="Document List View">
+                                        <i class="fa-solid fa-list-ul"></i> Document List
+                                    </button>
+                                </div>
+                                <div class="search-box">
+                                    <input type="text" id="slideSearchInput" placeholder="Search pages or notes..." aria-label="Search content or notes" style="padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px;" />
+                                </div>
                             </div>
                         </div>
-                        <div id="docFilterContainer" class="doc-filter-bar"></div>
-                        <div id="slidesContainer" class="slides-container">
-                            <!-- Dynamically populated -->
+
+                        <!-- Mastery Map View (Default) -->
+                        <div id="masteryMapSection" class="mastery-section">
+                            <div class="mastery-summary-card">
+                                <div class="mastery-stat-item">
+                                    <span class="stat-number" id="masteryOverallPercent">0%</span>
+                                    <span class="stat-label">Overall Mastery</span>
+                                </div>
+                                <div class="mastery-stat-divider"></div>
+                                <div class="mastery-stat-item">
+                                    <span class="stat-number text-success" id="masteryMasteredCount">0</span>
+                                    <span class="stat-label">Mastered Slides</span>
+                                </div>
+                                <div class="mastery-stat-divider"></div>
+                                <div class="mastery-stat-item">
+                                    <span class="stat-number text-amber" id="masteryLearningCount">0</span>
+                                    <span class="stat-label">In Progress</span>
+                                </div>
+                                <div class="mastery-stat-divider"></div>
+                                <div class="mastery-stat-item">
+                                    <span class="stat-number text-danger" id="masteryWeakSpotsCount">0</span>
+                                    <span class="stat-label">Weak Spots</span>
+                                </div>
+                            </div>
+
+                            <div class="mastery-legend">
+                                <span class="legend-chip"><span class="legend-swatch empty"></span> Untested</span>
+                                <span class="legend-chip"><span class="legend-swatch learning"></span> In Progress</span>
+                                <span class="legend-chip"><span class="legend-swatch mastered"></span> Mastered</span>
+                                <span class="legend-chip"><span class="legend-swatch weak"></span> 🎯 Weak Spot</span>
+                            </div>
+
+                            <div id="masteryTilesGrid" class="mastery-tiles-grid" role="grid" aria-label="Slides Mastery Tiles">
+                                <!-- Dynamic Mastery Tiles rendered here -->
+                            </div>
                         </div>
+
+                        <!-- Document List View (Toggled via Switcher) -->
+                        <div id="docListSection" class="doc-list-section hidden">
+                            <div id="docFilterContainer" class="doc-filter-bar"></div>
+                            <div id="slidesContainer" class="slides-container">
+                                <!-- Dynamically populated slide cards -->
+                            </div>
+                        </div>
+
+                        <!-- Slide Detail Modal (Opened on Mastery Tile Click) -->
+                        <div id="slideDetailModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalSlideTitle">
+                            <div class="modal-card">
+                                <div class="modal-header">
+                                    <div>
+                                        <div class="modal-badge-row">
+                                            <span id="modalSlideBadge" class="badge">Slide 1</span>
+                                            <span id="modalMasteryBadge" class="badge badge-fallback">0% Mastery</span>
+                                            <span id="modalWeakSpotBadge" class="badge badge-warning hidden">🎯 Weak Spot</span>
+                                            <span id="modalWarningBadge" class="badge badge-danger hidden">⚠️ Warning</span>
+                                        </div>
+                                        <h3 id="modalSlideTitle">Slide Title</h3>
+                                    </div>
+                                    <button class="modal-close-btn" onclick="closeSlideDetailModal()" aria-label="Close modal">&times;</button>
+                                </div>
+                                <div class="modal-body">
+                                    <div id="modalWarningAlert" class="alert-box alert-warning hidden">
+                                        <i class="fa-solid fa-triangle-exclamation"></i>
+                                        <span id="modalWarningText">Slide could not be fully parsed.</span>
+                                    </div>
+
+                                    <div class="modal-section">
+                                        <h4><i class="fa-solid fa-align-left"></i> Slide Content</h4>
+                                        <div id="modalSlideContent" class="modal-content-box"></div>
+                                    </div>
+
+                                    <div id="modalNotesSection" class="modal-section hidden">
+                                        <h4><i class="fa-solid fa-note-sticky"></i> Presenter Notes / Annotations</h4>
+                                        <div id="modalSlideNotes" class="modal-notes-box"></div>
+                                    </div>
+
+                                    <div id="modalDueCardsSection" class="modal-section hidden">
+                                        <h4><i class="fa-solid fa-clone"></i> Due Flashcards for This Slide</h4>
+                                        <div id="modalDueCardsList" class="modal-cards-list"></div>
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button id="modalTeachMeBtn" class="btn btn-primary">
+                                        <i class="fa-solid fa-graduation-cap"></i> Teach Me This (AI Tutor)
+                                    </button>
+                                    <button class="btn btn-outline" onclick="closeSlideDetailModal()">Close</button>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
 
                     <!-- 2. STUDY GUIDE SUMMARY TAB -->
                     <div id="summaryTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-summary">
                         <div class="panel-header flex-between">
                             <div>
-                                <h2><i class="fa-solid fa-graduation-cap" aria-hidden="true"></i> AI Study Guide & Breakdown</h2>
-                                <p class="panel-subtitle">Overview, key concepts, speaker note highlights, and tips.</p>
+                                <h2><i class="fa-solid fa-graduation-cap" aria-hidden="true"></i> Interactive Study Guide</h2>
+                                <p class="panel-subtitle">Expandable concepts, 10-second TL;DRs, speaker note clues, and micro-quizzes.</p>
                             </div>
-                            <div style="display: flex; gap: 8px;">
-                                <button class="btn btn-outline" onclick="readAloudStudyGuide()" title="Read Study Guide out loud">
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button class="btn btn-outline" id="tldrToggleBtn" onclick="toggleTldrMode()" title="Toggle condensed 10-second TL;DR mode" aria-label="Toggle 10 second TLDR">
+                                    <i class="fa-solid fa-bolt" aria-hidden="true"></i> <span id="tldrBtnText">10s TL;DR: OFF</span>
+                                </button>
+                                <button class="btn btn-outline" onclick="readAloudStudyGuide()" title="Read Study Guide out loud" aria-label="Read study guide aloud">
                                     <i class="fa-solid fa-volume-high" aria-hidden="true"></i> Read Aloud
                                 </button>
                                 <button id="generateSummaryBtn" class="btn btn-secondary" aria-label="Regenerate Study Guide">
@@ -163,37 +306,73 @@
                         <div id="summaryContainer" class="summary-container">
                             <div class="placeholder-state">
                                 <i class="fa-solid fa-book-open placeholder-icon" aria-hidden="true"></i>
-                                <p>Click below to generate a full study guide from your slides, PDF & presenter notes.</p>
+                                <p>Click below to generate an interactive study guide with analogies and concept micro-tests.</p>
                                 <button class="btn btn-primary" onclick="loadStudySummary()">Generate Study Guide</button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- 3. FLASHCARDS TAB (SM-2 Spaced Repetition) -->
+                    <!-- 3. FLASHCARDS TAB (Deck Run with SM-2) -->
                     <div id="flashcardsTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-flashcards">
                         <div class="panel-header flex-between">
                             <div>
                                 <h2>
-                                    <i class="fa-solid fa-clone" aria-hidden="true"></i> Spaced Repetition Flashcards (SM-2)
-                                    <span id="dueCardsBadge" class="badge badge-active" style="margin-left: 8px;">0 Cards Due</span>
+                                    <i class="fa-solid fa-clone" aria-hidden="true"></i> Flashcard Deck Run (SM-2)
+                                    <span id="dueCardsBadge" class="badge badge-active" style="margin-left: 8px;">0 Due</span>
                                 </h2>
-                                <p class="panel-subtitle">Review scheduled cards. Flip to reveal answer, then rate how well you remembered!</p>
+                                <p class="panel-subtitle">Active recall run. 3D card flip with spaced repetition scheduling.</p>
                             </div>
-                            <div style="display: flex; gap: 8px;">
-                                <button class="btn btn-outline" id="exportAnkiBtn" onclick="exportAnkiCSV()" title="Export flashcards to Anki CSV format">
-                                    <i class="fa-solid fa-file-export" aria-hidden="true"></i> Export Anki CSV
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button class="btn btn-outline" id="exportAnkiBtn" onclick="exportAnkiCSV()" title="Export flashcards to Anki CSV format" aria-label="Export Anki CSV">
+                                    <i class="fa-solid fa-file-export" aria-hidden="true"></i> Export Anki
                                 </button>
                                 <button id="generateFlashcardsBtn" class="btn btn-secondary" aria-label="Generate new flashcards">
-                                    <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Regenerate Cards
+                                    <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Regenerate Deck
                                 </button>
+                            </div>
+                        </div>
+
+                        <!-- Deck Run Status Header -->
+                        <div id="deckRunHeader" class="deck-run-header hidden">
+                            <div class="deck-run-progress">
+                                <svg viewBox="0 0 36 36" class="deck-progress-ring">
+                                    <path class="deck-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                    <path id="deckRingFill" class="deck-ring-fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                </svg>
+                                <span id="deckCounterText" class="deck-counter-text">1 / 12</span>
+                            </div>
+                            <div id="comboCounterBadge" class="combo-badge hidden">
+                                <span class="combo-flame">🔥</span> <span id="comboStreakNum">0</span>x Combo!
+                            </div>
+                            <div class="deck-kbd-hint">
+                                <span class="kbd">Space</span> Flip &nbsp;•&nbsp; <span class="kbd">1</span> Again &nbsp;•&nbsp; <span class="kbd">2</span> Hard &nbsp;•&nbsp; <span class="kbd">3</span> Good &nbsp;•&nbsp; <span class="kbd">4</span> Easy
                             </div>
                         </div>
                         
                         <div id="flashcardsContainer" class="flashcard-deck-container">
                             <div class="placeholder-state">
                                 <i class="fa-solid fa-clone placeholder-icon" aria-hidden="true"></i>
-                                <p>Ready to practice active recall? Generate flashcards with SM-2 review scheduling.</p>
+                                <p>Ready to practice active recall? Generate flashcards with 3D flip and SM-2 review scheduling.</p>
                                 <button class="btn btn-primary" onclick="loadFlashcards()">Generate Flashcards</button>
+                            </div>
+                        </div>
+
+                        <!-- End of Deck Screen (Hidden until finished) -->
+                        <div id="deckCompletedScreen" class="deck-completed-card hidden">
+                            <canvas id="confettiCanvas" class="confetti-canvas"></canvas>
+                            <div class="completed-content">
+                                <div class="trophy-circle">🎉</div>
+                                <h2>Deck Run Complete!</h2>
+                                <p id="deckCompletedSummaryText">You reviewed all due cards for this session.</p>
+                                <div class="completed-stats-row">
+                                    <div class="comp-stat"><strong id="compMasteredCount">0</strong><span>Cards Mastered</span></div>
+                                    <div class="comp-stat"><strong id="compMaxCombo">0x</strong><span>Max Combo</span></div>
+                                    <div class="comp-stat"><strong id="compNextReview">Tomorrow</strong><span>Next Review</span></div>
+                                </div>
+                                <div style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">
+                                    <button class="btn btn-primary" onclick="restartDeckRun()"><i class="fa-solid fa-rotate-right"></i> Run Deck Again</button>
+                                    <button class="btn btn-outline" onclick="switchTab('tab-slides')"><i class="fa-solid fa-chess-board"></i> View Mastery Map</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -235,10 +414,10 @@
                         </div>
                     </div>
 
-                    <!-- 5. AI TUTOR CHAT TAB (Claude-inspired) -->
+                    <!-- 5. AI TUTOR CHAT & FEYNMAN TAB -->
                     <div id="chatTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-chat">
                         <div class="claude-chat-container">
-                            <!-- Claude-style Header -->
+                            <!-- Claude-style Header with Persona Selection -->
                             <div class="claude-header">
                                 <div class="claude-tutor-profile">
                                     <div class="claude-avatar">
@@ -246,24 +425,23 @@
                                     </div>
                                     <div class="claude-profile-info">
                                         <div class="claude-title-row">
-                                            <h3>AI Study Teacher</h3>
-                                            <span class="claude-model-pill"><i class="fa-solid fa-brain"></i> Smart AI Active</span>
+                                            <h3 id="activeTeacherName">Socratic Sage</h3>
+                                            <span class="claude-model-pill"><i class="fa-solid fa-brain"></i> Active Professor</span>
                                         </div>
                                         <div class="claude-status-line">
                                             <span class="claude-status-dot"></span>
-                                            <span id="chatContextStatus">Ready • Document slides & notes loaded</span>
+                                            <span id="chatContextStatus">Ready • Document slides & notes indexed</span>
                                         </div>
                                     </div>
                                 </div>
                                 <div class="claude-header-actions">
-                                    <div class="claude-mode-pill-select">
-                                        <i class="fa-solid fa-sliders mode-icon" aria-hidden="true"></i>
-                                        <select id="teacherModeSelect" aria-label="Select AI Teacher Mode">
-                                            <option value="tutor">👨‍🏫 Interactive Tutor</option>
-                                            <option value="eli5">👶 Explain Like I'm 5</option>
-                                            <option value="quiz_me">🎯 Socratic Examiner (Quiz Me)</option>
-                                            <option value="notes_deepdive">📌 Speaker Notes Deep-Dive</option>
-                                        </select>
+                                    <div class="chat-subview-toggle">
+                                        <button id="viewChatModeBtn" class="btn btn-primary btn-sm active" onclick="switchChatSubView('chat')">
+                                            <i class="fa-solid fa-comments"></i> AI Chat
+                                        </button>
+                                        <button id="viewFeynmanModeBtn" class="btn btn-outline btn-sm" onclick="switchChatSubView('feynman')">
+                                            <i class="fa-solid fa-chalkboard-user"></i> 🎓 Teach It Back
+                                        </button>
                                     </div>
                                     <button class="claude-icon-btn" onclick="stopSpeech()" title="Stop audio read aloud" aria-label="Stop audio">
                                         <i class="fa-solid fa-volume-xmark" aria-hidden="true"></i>
@@ -274,84 +452,188 @@
                                 </div>
                             </div>
 
-                            <!-- Claude-style Prompt Starters / Suggestions -->
-                            <div class="claude-suggestions-container" id="claudeSuggestionsContainer">
-                                <span class="claude-suggestion-label"><i class="fa-regular fa-lightbulb"></i> Suggested:</span>
-                                <div class="claude-chips-scroll" id="claudeChipsScroll">
-                                    <button class="claude-chip" onclick="sendSuggestedQuestion('Summarize the big picture and key takeaways across the entire presentation.')">
-                                        <span>💡 Master Takeaways & Big Picture</span>
+                            <!-- Teacher Persona Selection Cards -->
+                            <div class="persona-cards-row" id="personaCardsRow" role="radiogroup" aria-label="Select AI Teacher Persona">
+                                <button class="persona-card active" data-mode="socratic" role="radio" aria-checked="true" onclick="selectTeacherPersona('socratic')">
+                                    <div class="persona-avatar">🧙</div>
+                                    <div class="persona-text">
+                                        <strong>Socratic Sage</strong>
+                                        <span>Guides with reflective questions</span>
+                                    </div>
+                                </button>
+                                <button class="persona-card" data-mode="eli5" role="radio" aria-checked="false" onclick="selectTeacherPersona('eli5')">
+                                    <div class="persona-avatar">🐣</div>
+                                    <div class="persona-text">
+                                        <strong>ELI5 Buddy</strong>
+                                        <span>Simple everyday analogies</span>
+                                    </div>
+                                </button>
+                                <button class="persona-card" data-mode="quiz_me" role="radio" aria-checked="false" onclick="selectTeacherPersona('quiz_me')">
+                                    <div class="persona-avatar">⚖️</div>
+                                    <div class="persona-text">
+                                        <strong>Strict Examiner</strong>
+                                        <span>Demands rigor & definitions</span>
+                                    </div>
+                                </button>
+                                <button class="persona-card" data-mode="notes_deepdive" role="radio" aria-checked="false" onclick="selectTeacherPersona('notes_deepdive')">
+                                    <div class="persona-avatar">🕵️</div>
+                                    <div class="persona-text">
+                                        <strong>Notes Detective</strong>
+                                        <span>Speaker notes & test clues</span>
+                                    </div>
+                                </button>
+                            </div>
+
+                            <!-- Feynman Mode View (Hidden by default) -->
+                            <div id="feynmanContainer" class="feynman-container hidden">
+                                <div class="feynman-intro-box">
+                                    <h3><i class="fa-solid fa-chalkboard-user"></i> The Feynman Technique: Teach It to Master It</h3>
+                                    <p>Select a concept or slide, then explain it simply in your own words. The AI will evaluate your clarity, identify what you got right, and uncover missing nuances or misconceptions.</p>
+                                </div>
+
+                                <div class="feynman-form">
+                                    <div class="form-group">
+                                        <label for="feynmanConceptInput">Concept or Slide to Explain</label>
+                                        <input type="text" id="feynmanConceptInput" class="form-control" placeholder="e.g. Gradient Descent, Slide 3, Overfitting..." />
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="feynmanExplanationInput">Your Explanation (Explain in plain words as if teaching a classmate)</label>
+                                        <textarea id="feynmanExplanationInput" class="form-control feynman-textarea" rows="4" placeholder="Explain the core mechanism, why it matters, and how it works step-by-step..."></textarea>
+                                    </div>
+                                    <button id="feynmanSubmitBtn" class="btn btn-primary" onclick="submitFeynmanExplanation()">
+                                        <i class="fa-solid fa-paper-plane"></i> Evaluate Explanation (+XP)
                                     </button>
-                                    <button class="claude-chip" onclick="sendSuggestedQuestion('Explain the core concepts and mechanisms using simple everyday analogies.')">
-                                        <span>🌟 Intuitive Real-World Analogies</span>
-                                    </button>
-                                    <button class="claude-chip" onclick="sendSuggestedQuestion('What are the most crucial presenter notes and instructor test hints?')">
-                                        <span>📌 Presenter Notes & Test Clues</span>
-                                    </button>
-                                    <button class="claude-chip" onclick="sendSuggestedQuestion('Quiz me with 3 challenging conceptual questions to test my recall.')">
-                                        <span>🎯 Socratic Recall Challenge</span>
-                                    </button>
+                                </div>
+
+                                <!-- Feynman Evaluation Result (Hidden until evaluated) -->
+                                <div id="feynmanResultBox" class="feynman-result-box hidden">
+                                    <div class="feynman-result-header">
+                                        <div class="clarity-gauge-circle">
+                                            <span id="feynmanScoreText">85</span>
+                                            <small>/ 100</small>
+                                        </div>
+                                        <div>
+                                            <h4 id="feynmanScoreTitle">Clear & Intuitive!</h4>
+                                            <p id="feynmanMentorFeedback">"Feynman once said: if you can't explain it simply, you don't understand it well enough."</p>
+                                            <span id="feynmanXpAwardedBadge" class="badge badge-success">+55 XP Awarded</span>
+                                        </div>
+                                    </div>
+
+                                    <div class="feynman-breakdown-grid">
+                                        <div class="feynman-col strengths-col">
+                                            <h5><i class="fa-solid fa-circle-check text-success"></i> What You Got Right</h5>
+                                            <ul id="feynmanStrengthsList"></ul>
+                                        </div>
+                                        <div class="feynman-col missing-col">
+                                            <h5><i class="fa-solid fa-circle-exclamation text-amber"></i> Missing Nuances to Add</h5>
+                                            <ul id="feynmanMissingList"></ul>
+                                        </div>
+                                    </div>
+
+                                    <div id="feynmanMisconceptionsBox" class="feynman-misconceptions hidden">
+                                        <h5><i class="fa-solid fa-triangle-exclamation text-danger"></i> Misconceptions to Correct</h5>
+                                        <ul id="feynmanMisconceptionsList"></ul>
+                                    </div>
+
+                                    <div class="feynman-analogy-box">
+                                        <h5><i class="fa-solid fa-lightbulb"></i> Simplified Everyday Analogy</h5>
+                                        <p id="feynmanAnalogyText"></p>
+                                    </div>
                                 </div>
                             </div>
 
-                            <!-- Dynamic Session Memory Indicator -->
-                            <div id="sessionMemoryBar" class="session-memory-bar hidden">
-                                <span class="memory-label"><i class="fa-solid fa-brain"></i> Active Session Memory:</span>
-                                <span id="sessionMemoryTopics" class="memory-topics-text">No topics explored yet</span>
-                                <button class="clear-memory-btn" onclick="clearSessionMemoryOnly()" title="Clear session memory">Reset</button>
-                            </div>
-
-                            <!-- Claude Messages Stream -->
-                            <div id="chatMessages" class="claude-messages-stream" role="log" aria-live="polite">
-                                <div class="claude-msg claude-msg-ai">
-                                    <div class="claude-msg-avatar">
-                                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                            <!-- Standard Chat Stream View -->
+                            <div id="chatStreamContainer" class="chat-stream-container">
+                                <!-- Prompt Starters -->
+                                <div class="claude-suggestions-container" id="claudeSuggestionsContainer">
+                                    <span class="claude-suggestion-label"><i class="fa-regular fa-lightbulb"></i> Suggested:</span>
+                                    <div class="claude-chips-scroll" id="claudeChipsScroll">
+                                        <button class="claude-chip" onclick="sendSuggestedQuestion('Summarize the big picture and key takeaways across the entire presentation.')">
+                                            <span>💡 Master Takeaways & Big Picture</span>
+                                        </button>
+                                        <button class="claude-chip" onclick="sendSuggestedQuestion('Explain the core concepts and mechanisms using simple everyday analogies.')">
+                                            <span>🌟 Intuitive Real-World Analogies</span>
+                                        </button>
+                                        <button class="claude-chip" onclick="sendSuggestedQuestion('What are the most crucial presenter notes and instructor test hints?')">
+                                            <span>📌 Presenter Notes & Test Clues</span>
+                                        </button>
+                                        <button class="claude-chip" onclick="sendSuggestedQuestion('Quiz me with 3 challenging conceptual questions to test my recall.')">
+                                            <span>🎯 Socratic Recall Challenge</span>
+                                        </button>
                                     </div>
-                                    <div class="claude-msg-body">
-                                        <div class="claude-msg-meta">
-                                            <span class="claude-msg-author">Claude / GPT AI Tutor</span>
-                                            <span class="claude-msg-badge">Active Session</span>
-                                        </div>
-                                        <div class="claude-msg-content markdown-body">
-                                            Hello! I've loaded and indexed your entire presentation, including all slide diagrams, state transitions, formulas, and instructor notes.
+                                </div>
 
-We can explore any concept with intuitive everyday analogies, break down specific slides step-by-step, or test your intuition with Socratic questions. I'll maintain active memory across our conversation so we can build on ideas as we go.
+                                <!-- Dynamic Session Memory Indicator -->
+                                <div id="sessionMemoryBar" class="session-memory-bar hidden">
+                                    <span class="memory-label"><i class="fa-solid fa-brain"></i> Active Session Memory:</span>
+                                    <span id="sessionMemoryTopics" class="memory-topics-text">No topics explored yet</span>
+                                    <button class="clear-memory-btn" onclick="clearSessionMemoryOnly()" title="Clear session memory">Reset</button>
+                                </div>
+
+                                <!-- Messages Stream -->
+                                <div id="chatMessages" class="claude-messages-stream" role="log" aria-live="polite">
+                                    <div class="claude-msg claude-msg-ai">
+                                        <div class="claude-msg-avatar">
+                                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                        </div>
+                                        <div class="claude-msg-body">
+                                            <div class="claude-msg-meta">
+                                                <span class="claude-msg-author" id="initialTutorLabel">Socratic Sage</span>
+                                                <span class="claude-msg-badge">Active Session</span>
+                                            </div>
+                                            <div class="claude-msg-content markdown-body">
+Hello! I've loaded and indexed your entire presentation, including all slide diagrams, formulas, tables, and instructor speaker annotations.
+
+We can explore any concept with intuitive everyday analogies, break down specific slides step-by-step, or test your intuition with Socratic inquiry. I'll maintain active memory across our conversation so we can build on ideas as we go.
 
 Where would you like to start?
-                                        </div>
-                                        <div class="claude-msg-actions">
-                                            <button class="claude-action-btn" onclick="speakText('Hello! I have loaded and indexed your entire presentation. Where would you like to start?')" title="Listen">
-                                                <i class="fa-solid fa-volume-high"></i> Listen
-                                            </button>
-                                            <button class="claude-action-btn" onclick="copyMessageText(this)" title="Copy text">
-                                                <i class="fa-regular fa-copy"></i> Copy
-                                            </button>
+                                            </div>
+                                            <div class="claude-msg-actions">
+                                                <button class="claude-action-btn" onclick="speakText('Hello! I have loaded and indexed your entire presentation. Where would you like to start?')" title="Listen">
+                                                    <i class="fa-solid fa-volume-high"></i> Listen
+                                                </button>
+                                                <button class="claude-action-btn" onclick="copyMessageText(this)" title="Copy text">
+                                                    <i class="fa-regular fa-copy"></i> Copy
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
 
-                            <!-- Claude Signature Floating Capsule Input Box -->
-                            <div class="claude-input-card">
-                                <textarea id="chatInput" class="claude-textarea" placeholder="Reply to AI Teacher or ask anything about your slides..." rows="1" aria-label="Type your study question"></textarea>
-                                <div class="claude-input-bottom-bar">
-                                    <div class="claude-input-left-tools">
-                                        <span class="claude-mode-tag" id="currentModeTag"><i class="fa-solid fa-wand-magic-sparkles"></i> Interactive Tutor</span>
-                                        <span class="claude-shortcut-hint">Press <strong>Enter</strong> to send • <strong>Shift+Enter</strong> for newline</span>
+                                <!-- Typing Indicator (Bouncing Dots) -->
+                                <div id="chatTypingIndicator" class="typing-indicator-row hidden">
+                                    <div class="typing-dot"></div>
+                                    <div class="typing-dot"></div>
+                                    <div class="typing-dot"></div>
+                                    <span class="typing-label">Tutor is thinking...</span>
+                                </div>
+
+                                <!-- Dynamic Suggested Follow-up Chips -->
+                                <div id="chatFollowUpChips" class="follow-up-chips-container hidden"></div>
+
+                                <!-- Floating Input Capsule -->
+                                <div class="claude-input-card">
+                                    <textarea id="chatInput" class="claude-textarea" placeholder="Reply to AI Teacher or ask anything about your slides..." rows="1" aria-label="Type your study question"></textarea>
+                                    <div class="claude-input-bottom-bar">
+                                        <div class="claude-input-left-tools">
+                                            <span class="claude-mode-tag" id="currentModeTag"><i class="fa-solid fa-wand-magic-sparkles"></i> Socratic Sage</span>
+                                            <span class="claude-shortcut-hint">Press <strong>Enter</strong> to send • <strong>Shift+Enter</strong> for newline</span>
+                                        </div>
+                                        <button id="sendChatBtn" class="claude-send-btn" aria-label="Send message" title="Send message">
+                                            <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>
+                                        </button>
                                     </div>
-                                    <button id="sendChatBtn" class="claude-send-btn" aria-label="Send message" title="Send message">
-                                        <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>
-                                    </button>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- 6. QUIZ MASTER HUB TAB -->
+                    <!-- 6. QUIZ MASTER & BOSS BATTLE TAB -->
                     <div id="quizmasterTab" class="tab-panel" role="tabpanel" aria-labelledby="tab-quizmaster">
                         <div class="panel-header flex-between">
                             <div>
                                 <h2><i class="fa-solid fa-trophy" aria-hidden="true"></i> 🏆 Quiz Master Hub</h2>
-                                <p class="panel-subtitle">Interactive exam simulator, timed mock tests, difficulty customization, and score tracking.</p>
+                                <p class="panel-subtitle">Classic timed mock exams OR live Boss Battle game mode with hearts & combo multipliers.</p>
                             </div>
                             <button class="btn btn-outline" id="viewQuizHistoryBtn" onclick="loadQuizMasterHistory()">
                                 <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Score History
@@ -360,10 +642,22 @@ Where would you like to start?
 
                         <!-- Exam Setup Configurator -->
                         <div id="qmSetupCard" class="qm-card">
-                            <h3><i class="fa-solid fa-sliders" aria-hidden="true"></i> Exam Configurator</h3>
-                            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">Customize your mock exam settings based on your presentation content.</p>
+                            <div class="qm-setup-header">
+                                <div>
+                                    <h3><i class="fa-solid fa-sliders" aria-hidden="true"></i> Exam Configurator</h3>
+                                    <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Choose your exam format and challenge parameters.</p>
+                                </div>
+                                <div class="qm-mode-toggle-group">
+                                    <button type="button" id="qmModeClassicBtn" class="mode-toggle-btn active" onclick="setQuizMasterMode('classic')">
+                                        <i class="fa-solid fa-file-pen"></i> Classic Exam
+                                    </button>
+                                    <button type="button" id="qmModeBossBtn" class="mode-toggle-btn" onclick="setQuizMasterMode('boss')">
+                                        <i class="fa-solid fa-dragon"></i> ⚔️ Boss Battle
+                                    </button>
+                                </div>
+                            </div>
 
-                            <div class="qm-form-grid">
+                            <div class="qm-form-grid" style="margin-top: 16px;">
                                 <div class="form-group">
                                     <label for="qmDifficulty">Difficulty Level</label>
                                     <select id="qmDifficulty" class="form-control">
@@ -386,13 +680,46 @@ Where would you like to start?
                                 </div>
                             </div>
 
-                            <button class="btn btn-primary btn-large" style="margin-top: 16px; width: 100%;" onclick="startQuizMasterExam()">
-                                <i class="fa-solid fa-play" aria-hidden="true"></i> Start Timed Exam
+                            <button class="btn btn-primary btn-large" id="startExamBtn" style="margin-top: 16px; width: 100%;" onclick="startQuizMasterExam()">
+                                <i class="fa-solid fa-play" aria-hidden="true"></i> <span id="startExamBtnText">Start Timed Exam</span>
                             </button>
                         </div>
 
                         <!-- Live Timed Exam Area (Hidden until started) -->
                         <div id="qmExamCard" class="qm-card hidden">
+                            <!-- Boss Battle Arena (Active in Boss Battle Mode) -->
+                            <div id="qmBossArena" class="boss-arena-card hidden">
+                                <div class="boss-top-row">
+                                    <div class="boss-profile">
+                                        <div class="boss-avatar-pulse">👾</div>
+                                        <div class="boss-meta">
+                                            <h4 id="bossName">The Concept Titan</h4>
+                                            <span class="boss-title">Final Boss • Strike with correct answers!</span>
+                                        </div>
+                                    </div>
+                                    <div class="boss-lives-box" title="Student Lives (Hearts)">
+                                        <span class="lives-label">Lives:</span>
+                                        <span id="bossLivesIcons" class="lives-hearts">❤️❤️❤️</span>
+                                    </div>
+                                </div>
+                                <div class="boss-health-row">
+                                    <div class="boss-health-track">
+                                        <div id="bossHealthBarFill" class="boss-health-fill" style="width: 100%;"></div>
+                                    </div>
+                                    <span id="bossHealthPercent" class="boss-health-text">100% HP</span>
+                                </div>
+                                <div class="boss-perks-row">
+                                    <div class="boss-multiplier-badge" id="bossMultiplierBadge">⚡ 1x Streak Multiplier</div>
+                                    <div class="boss-timer-ring-box" title="Per-question timer">
+                                        <svg viewBox="0 0 36 36" class="boss-timer-ring">
+                                            <path class="boss-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                            <path id="bossTimerFill" class="boss-ring-fill" stroke-dasharray="100, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                        </svg>
+                                        <span id="bossQuestionTimerText">30s</span>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="qm-exam-header">
                                 <div>
                                     <h3 id="qmExamTitle">Quiz Master Mock Exam</h3>
@@ -431,8 +758,9 @@ Where would you like to start?
                                 <div>
                                     <h2 id="qmScoreGrade">Great Effort!</h2>
                                     <p id="qmScoreSummaryText">You scored 0 out of 0 questions correctly.</p>
-                                    <div style="margin-top: 10px; display: flex; gap: 8px;">
+                                    <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
                                         <button class="btn btn-primary" onclick="resetQuizMasterSetup()"><i class="fa-solid fa-rotate"></i> New Exam</button>
+                                        <button class="btn btn-outline hidden" id="qmRetryMissedBtn" onclick="retryMissedQuestions()"><i class="fa-solid fa-arrows-rotate"></i> Retry Missed Questions</button>
                                         <button class="btn btn-secondary" onclick="loadQuizMasterHistory()"><i class="fa-solid fa-clock-rotate-left"></i> View History</button>
                                     </div>
                                 </div>
@@ -452,6 +780,56 @@ Where would you like to start?
                         </div>
 
                     </div>
+
+                </div>
+            </div>
+
+            <!-- End Study Session Summary Modal -->
+            <div id="sessionSummaryModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="sessionSummaryTitle">
+                <div class="modal-card">
+                    <div class="modal-header">
+                        <div>
+                            <span class="badge badge-active">Session Recap</span>
+                            <h3 id="sessionSummaryTitle">🎉 Study Session Completed!</h3>
+                        </div>
+                        <button class="modal-close-btn" onclick="closeSessionSummaryModal()" aria-label="Close summary modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p style="color: var(--text-muted); margin-bottom: 20px;">Here is your performance snapshot from this session:</p>
+                        <div class="summary-metrics-grid">
+                            <div class="metric-card">
+                                <i class="fa-solid fa-stopwatch metric-icon"></i>
+                                <strong id="summaryTimeSpent">0m</strong>
+                                <span>Study Duration</span>
+                            </div>
+                            <div class="metric-card">
+                                <i class="fa-solid fa-bolt metric-icon text-amber"></i>
+                                <strong id="summaryXpEarned">+0 XP</strong>
+                                <span>XP Earned</span>
+                            </div>
+                            <div class="metric-card">
+                                <i class="fa-solid fa-clone metric-icon text-secondary"></i>
+                                <strong id="summaryCardsReviewed">0</strong>
+                                <span>Cards Reviewed</span>
+                            </div>
+                            <div class="metric-card">
+                                <i class="fa-solid fa-bullseye metric-icon text-success"></i>
+                                <strong id="summaryQuizAccuracy">0%</strong>
+                                <span>Quiz Accuracy</span>
+                            </div>
+                        </div>
+                        <div id="summaryWeakestSlidesBox" class="summary-weakest-box">
+                            <h4><i class="fa-solid fa-crosshairs"></i> Priority Focus for Next Session:</h4>
+                            <ul id="summaryWeakestList">
+                                <li>All caught up! Excellent work.</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-primary" onclick="closeSessionSummaryModal()">Awesome, Back to Hub</button>
+                    </div>
+                </div>
+            </div>
 
                 </div>
             </div>

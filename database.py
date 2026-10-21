@@ -622,6 +622,7 @@ def get_progress(session_id: str) -> Dict[str, Any]:
 
     with get_db() as conn:
         cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO sessions (session_id, filename, total_slides, full_digest, metadata) VALUES (?, '', 0, '', '')", (session_id,))
         cursor.execute("SELECT xp, streak_days, last_active_date FROM study_progress WHERE session_id = ?", (session_id,))
         row = cursor.fetchone()
 
@@ -723,6 +724,7 @@ def record_progress_event(session_id: str, event_type: str, payload: Optional[Di
 
     with get_db() as conn:
         cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO sessions (session_id, filename, total_slides, full_digest, metadata) VALUES (?, '', 0, '', '')", (session_id,))
         cursor.execute("SELECT xp, streak_days, last_active_date FROM study_progress WHERE session_id = ?", (session_id,))
         row = cursor.fetchone()
 
